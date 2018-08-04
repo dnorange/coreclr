@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //*****************************************************************************
 // File: RCThread.cpp
 // 
@@ -18,7 +17,6 @@
 #include <aclapi.h>
 #include <hosting.h>
 
-#include "ipcmanagerinterface.h"
 #include "eemessagebox.h"
 #include "genericstackprobe.h"
 
@@ -122,7 +120,7 @@ void DebuggerRCThread::CloseIPCHandles()
 // cBufSizeInChars - the size of the buffer in characters, including the null.
 // pPrefx - The undecorated name of the event.
 //-----------------------------------------------------------------------------
-void GetPidDecoratedName(__out_z __in_ecount(cBufSizeInChars) WCHAR * pBuf,
+void GetPidDecoratedName(__out_ecount(cBufSizeInChars) WCHAR * pBuf,
                          int cBufSizeInChars,
                          const WCHAR * pPrefix)
 {
@@ -197,46 +195,6 @@ HANDLE OpenWin32EventOrThrow(
     RETURN h;
 }
 
-//-----------------------------------------------------------------------------
-// Holder for IPC SecurityAttribute
-//-----------------------------------------------------------------------------
-IPCHostSecurityAttributeHolder::IPCHostSecurityAttributeHolder(DWORD pid)
-{
-    CONTRACTL
-    {
-        SO_INTOLERANT;
-        THROWS;
-        GC_NOTRIGGER;
-    }
-    CONTRACTL_END;
-
-    m_pSA = NULL;
-
-#ifdef FEATURE_IPCMAN
-    HRESULT hr = CCLRSecurityAttributeManager::GetHostSecurityAttributes(&m_pSA);
-    IfFailThrow(hr);
-
-    _ASSERTE(m_pSA != NULL);
-#endif // FEATURE_IPCMAN
-}
-
-SECURITY_ATTRIBUTES * IPCHostSecurityAttributeHolder::GetHostSA()
-{
-    LIMITED_METHOD_CONTRACT;
-    return m_pSA;
-}
-
-
-IPCHostSecurityAttributeHolder::~IPCHostSecurityAttributeHolder()
-{
-    LIMITED_METHOD_CONTRACT;
-
-#ifdef FEATURE_IPCMAN
-    CCLRSecurityAttributeManager::DestroyHostSecurityAttributes(m_pSA);
-#endif // FEATURE_IPCMAN
-}
-
-
 //---------------------------------------------------------------------------------------
 //
 // Init
@@ -287,8 +245,8 @@ HRESULT DebuggerIPCControlBlock::Init(
     memset( this, 0, sizeof( DebuggerIPCControlBlock) );
 
     // Setup version checking info.
-    m_verMajor = VER_PRODUCTBUILD;
-    m_verMinor = VER_PRODUCTBUILD_QFE;
+    m_verMajor = CLR_BUILD_VERSION;
+    m_verMinor = CLR_BUILD_VERSION_QFE;
 
 #ifdef _DEBUG
     m_checkedBuild = true;
@@ -305,27 +263,21 @@ HRESULT DebuggerIPCControlBlock::Init(
         m_bHostingInFiber = true;
     }
 
-#if defined(FEATURE_DBGIPC_TRANSPORT_VM)
-    DWORD useTransport = CLRConfig::GetConfigValue(CLRConfig::UNSUPPORTED_DbgUseTransport);
-    if(!useTransport)
+#if !defined(FEATURE_DBGIPC_TRANSPORT_VM)
+    // Copy RSEA and RSER into the control block.
+    if (!m_rightSideEventAvailable.SetLocal(hRsea))
     {
-#endif
-        // Copy RSEA and RSER into the control block.
-        if (!m_rightSideEventAvailable.SetLocal(hRsea))
-        {
-            ThrowLastError();
-        }
+        ThrowLastError();
+    }
 
-        if (!m_rightSideEventRead.SetLocal(hRser))
-        {
-            ThrowLastError();
-        }
+    if (!m_rightSideEventRead.SetLocal(hRser))
+    {
+        ThrowLastError();
+    }
 
-        if (!m_leftSideUnmanagedWaitEvent.SetLocal(hLsuwe))
-        {
-            ThrowLastError();
-        }
-#ifdef FEATURE_DBGIPC_TRANSPORT_VM
+    if (!m_leftSideUnmanagedWaitEvent.SetLocal(hLsuwe))
+    {
+        ThrowLastError();
     }
 #endif // !FEATURE_DBGIPC_TRANSPORT_VM
 
@@ -339,11 +291,6 @@ HRESULT DebuggerIPCControlBlock::Init(
 
     return S_OK;
 }
-
-#ifdef FEATURE_IPCMAN
-extern CCLRSecurityAttributeManager s_CLRSecurityAttributeManager;
-#endif // FEATURE_IPCMAN
-
 
 void DebuggerRCThread::WatchForStragglers(void)
 {
@@ -420,78 +367,69 @@ HRESULT DebuggerRCThread::Init(void)
     HRESULT hr;
 
 #if defined(FEATURE_DBGIPC_TRANSPORT_VM)
-    DWORD useTransport = CLRConfig::GetConfigValue(CLRConfig::UNSUPPORTED_DbgUseTransport);
-    if(!useTransport)
+
+    if (m_pDCB)
     {
-#endif
-        IPCHostSecurityAttributeHolder sa(GetCurrentProcessId());
-
-        // Create the events that the thread will need to receive events
-        // from the out of process piece on the right side.
-        // We will not fail out if CreateEvent fails for RSEA or RSER. Because
-        // the worst case is that debugger cannot attach to debuggee.
-        //
-        HandleHolder rightSideEventAvailable(WszCreateEvent(sa.GetHostSA(), (BOOL) kAutoResetEvent, FALSE, NULL));
-
-        // Security fix:
-        // We need to check the last error to see if the event was precreated or not
-        // If so, we need to release the handle right now.
-        //
-        dwStatus = GetLastError();
-        if (dwStatus == ERROR_ALREADY_EXISTS)
-        {
-            // clean up the handle now
-            rightSideEventAvailable.Clear();
-        }
-
-        HandleHolder rightSideEventRead(WszCreateEvent(sa.GetHostSA(), (BOOL) kAutoResetEvent, FALSE, NULL));
-
-        // Security fix:
-        // We need to check the last error to see if the event was precreated or not
-        // If so, we need to release the handle right now.
-        //
-        dwStatus = GetLastError();
-        if (dwStatus == ERROR_ALREADY_EXISTS)
-        {
-            // clean up the handle now
-            rightSideEventRead.Clear();
-        }
-
-
-        HandleHolder leftSideUnmanagedWaitEvent(CreateWin32EventOrThrow(NULL, kManualResetEvent, FALSE));
-
-        // Copy RSEA and RSER into the control block only if shared memory is created without error.
-        if (m_pDCB)
-        {
-            // Since Init() gets ownership of handles as soon as it's called, we can
-            // release our ownership now.
-            rightSideEventAvailable.SuppressRelease();
-            rightSideEventRead.SuppressRelease();
-            leftSideUnmanagedWaitEvent.SuppressRelease();
-
-            // NOTE: initialization of the debugger control block occurs partly on the left side and partly on
-            // the right side. This initialization occurs in parallel, so it's unsafe to make assumptions about 
-            // the order in which the fields will be initialized. 
-            hr = m_pDCB->Init(rightSideEventAvailable,
-                                           rightSideEventRead,
-                                           NULL,
-                                           NULL,
-                                           leftSideUnmanagedWaitEvent);
-
-            _ASSERTE(SUCCEEDED(hr)); // throws on error.
-        }
-
-#ifdef FEATURE_DBGIPC_TRANSPORT_VM 
+        hr = m_pDCB->Init(NULL, NULL, NULL, NULL, NULL);
+        _ASSERTE(SUCCEEDED(hr)); // throws on error.
     }
-    else
+#else //FEATURE_DBGIPC_TRANSPORT_VM 
+
+    // Create the events that the thread will need to receive events
+    // from the out of process piece on the right side.
+    // We will not fail out if CreateEvent fails for RSEA or RSER. Because
+    // the worst case is that debugger cannot attach to debuggee.
+    //
+    HandleHolder rightSideEventAvailable(WszCreateEvent(NULL, (BOOL) kAutoResetEvent, FALSE, NULL));
+
+    // Security fix:
+    // We need to check the last error to see if the event was precreated or not
+    // If so, we need to release the handle right now.
+    //
+    dwStatus = GetLastError();
+    if (dwStatus == ERROR_ALREADY_EXISTS)
     {
-        if (m_pDCB)
-        {
-            hr = m_pDCB->Init(NULL, NULL, NULL, NULL, NULL);
-            _ASSERTE(SUCCEEDED(hr)); // throws on error.
-        }
+        // clean up the handle now
+        rightSideEventAvailable.Clear();
     }
-#endif
+
+    HandleHolder rightSideEventRead(WszCreateEvent(NULL, (BOOL) kAutoResetEvent, FALSE, NULL));
+
+    // Security fix:
+    // We need to check the last error to see if the event was precreated or not
+    // If so, we need to release the handle right now.
+    //
+    dwStatus = GetLastError();
+    if (dwStatus == ERROR_ALREADY_EXISTS)
+    {
+        // clean up the handle now
+        rightSideEventRead.Clear();
+    }
+
+
+    HandleHolder leftSideUnmanagedWaitEvent(CreateWin32EventOrThrow(NULL, kManualResetEvent, FALSE));
+
+    // Copy RSEA and RSER into the control block only if shared memory is created without error.
+    if (m_pDCB)
+    {
+        // Since Init() gets ownership of handles as soon as it's called, we can
+        // release our ownership now.
+        rightSideEventAvailable.SuppressRelease();
+        rightSideEventRead.SuppressRelease();
+        leftSideUnmanagedWaitEvent.SuppressRelease();
+
+        // NOTE: initialization of the debugger control block occurs partly on the left side and partly on
+        // the right side. This initialization occurs in parallel, so it's unsafe to make assumptions about 
+        // the order in which the fields will be initialized. 
+        hr = m_pDCB->Init(rightSideEventAvailable,
+                                       rightSideEventRead,
+                                       NULL,
+                                       NULL,
+                                       leftSideUnmanagedWaitEvent);
+
+        _ASSERTE(SUCCEEDED(hr)); // throws on error.
+    }
+#endif //FEATURE_DBGIPC_TRANSPORT_VM 
 
     if(m_pDCB)
     {
@@ -747,11 +685,12 @@ HRESULT DebuggerRCThread::SetupRuntimeOffsets(DebuggerIPCControlBlock * pDebugge
     pDebuggerRuntimeOffsets->m_signalHijackCompleteBPAddr = (void*) SignalHijackCompleteFlare;
     pDebuggerRuntimeOffsets->m_excepNotForRuntimeBPAddr = (void*) ExceptionNotForRuntimeFlare;
     pDebuggerRuntimeOffsets->m_notifyRSOfSyncCompleteBPAddr = (void*) NotifyRightSideOfSyncCompleteFlare;
+    pDebuggerRuntimeOffsets->m_debuggerWordTLSIndex = g_debuggerWordTLSIndex;
 
 #if !defined(FEATURE_CORESYSTEM)
     // Grab the address of RaiseException in kernel32 because we have to play some games with exceptions
     // that are generated there (just another reason why mixed mode debugging is shady). See bug 476768.
-	HMODULE hModule = WszGetModuleHandle(W("kernel32.dll"));
+    HMODULE hModule = WszGetModuleHandle(W("kernel32.dll"));
     _ASSERTE(hModule != NULL);
     PREFAST_ASSUME(hModule != NULL);
     pDebuggerRuntimeOffsets->m_raiseExceptionAddr = GetProcAddress(hModule, "RaiseException");
@@ -777,12 +716,10 @@ HRESULT DebuggerRCThread::SetupRuntimeOffsets(DebuggerIPCControlBlock * pDebugge
     g_pEEInterface->GetRuntimeOffsets(&pDebuggerRuntimeOffsets->m_TLSIndex,
                                       &pDebuggerRuntimeOffsets->m_TLSIsSpecialIndex,
                                       &pDebuggerRuntimeOffsets->m_TLSCantStopIndex,
-                                      &pDebuggerRuntimeOffsets->m_TLSIndexOfPredefs,
                                       &pDebuggerRuntimeOffsets->m_EEThreadStateOffset,
                                       &pDebuggerRuntimeOffsets->m_EEThreadStateNCOffset,
                                       &pDebuggerRuntimeOffsets->m_EEThreadPGCDisabledOffset,
                                       &pDebuggerRuntimeOffsets->m_EEThreadPGCDisabledValue,
-                                      &pDebuggerRuntimeOffsets->m_EEThreadDebuggerWordOffset,
                                       &pDebuggerRuntimeOffsets->m_EEThreadFrameOffset,
                                       &pDebuggerRuntimeOffsets->m_EEThreadMaxNeededSize,
                                       &pDebuggerRuntimeOffsets->m_EEThreadSteppingStateMask,
@@ -791,10 +728,6 @@ HRESULT DebuggerRCThread::SetupRuntimeOffsets(DebuggerIPCControlBlock * pDebugge
                                       &pDebuggerRuntimeOffsets->m_EEThreadCantStopOffset,
                                       &pDebuggerRuntimeOffsets->m_EEFrameNextOffset,
                                       &pDebuggerRuntimeOffsets->m_EEIsManagedExceptionStateMask);
-
-#ifndef FEATURE_IMPLICIT_TLS
-    _ASSERTE((pDebuggerRuntimeOffsets->m_TLSIndexOfPredefs != 0) || !"CExecutionEngine::TlsIndex is not initialized yet");
-#endif
 
     // Remember the struct in the control block.
     pDebuggerIPCControlBlock->m_pRuntimeOffsets = pDebuggerRuntimeOffsets;
@@ -822,7 +755,7 @@ static LONG _debugFilter(LPEXCEPTION_POINTERS ep, PVOID pv)
     DWORD tid = GetCurrentThreadId();
 
     DebuggerIPCEventType type = (DebuggerIPCEventType) (event->type & DB_IPCE_TYPE_MASK);
-#endif _DEBUG || !FEATURE_CORESYSTEM
+#endif // _DEBUG || !FEATURE_CORESYSTEM
 
     // We should never AV here. In a debug build, throw up an assert w/ lots of useful (private) info.
 #ifdef _DEBUG
@@ -895,7 +828,7 @@ void AssertAllocationAllowed()
 
         // Can't call IsDbgHelperSpecialThread() here b/c that changes program state.
         // So we use our
-        if (DebuggerRCThread::s_DbgHelperThreadId.IsSameThread())
+        if (DebuggerRCThread::s_DbgHelperThreadId.IsCurrentThread())
         {
             // In case assert allocates, bump up the 'OK' counter to avoid an infinite recursion.
             SUPPRESS_ALLOCATION_ASSERTS_IN_THIS_SCOPE;
@@ -948,7 +881,7 @@ void DebuggerRCThread::ThreadProc(void)
 
 #ifdef _DEBUG
     // Track the helper thread.
-    s_DbgHelperThreadId.SetThreadId();
+    s_DbgHelperThreadId.SetToCurrentThread();
 #endif
     CantAllocHolder caHolder;
 
@@ -1060,14 +993,8 @@ void DebuggerRCThread::RightSideDetach(void)
 {
     _ASSERTE( m_fDetachRightSide == false );
     m_fDetachRightSide = true;
-#if defined(FEATURE_DBGIPC_TRANSPORT_VM)
-    DWORD useTransport = CLRConfig::GetConfigValue(CLRConfig::UNSUPPORTED_DbgUseTransport);
-    if(!useTransport)
-    {
-#endif
-        CloseIPCHandles();
-#ifdef FEATURE_DBGIPC_TRANSPORT_VM
-    }
+#if !defined(FEATURE_DBGIPC_TRANSPORT_VM)
+    CloseIPCHandles();
 #endif // !FEATURE_DBGIPC_TRANSPORT_VM
 }
 
@@ -1127,53 +1054,40 @@ bool DebuggerRCThread::HandleRSEA()
 
     LOG((LF_CORDB,LL_INFO10000, "RSEA from out of process (right side)\n"));
     DebuggerIPCEvent * e;
-#if defined(FEATURE_DBGIPC_TRANSPORT_VM)
-    DWORD useTransport = CLRConfig::GetConfigValue(CLRConfig::UNSUPPORTED_DbgUseTransport);
-    if(!useTransport)
-    {
-#endif
-        // Make room for any Right Side event on the stack.
-        BYTE buffer[CorDBIPC_BUFFER_SIZE];
-        e = (DebuggerIPCEvent *) buffer;
+#if !defined(FEATURE_DBGIPC_TRANSPORT_VM)
+    // Make room for any Right Side event on the stack.
+ BYTE buffer[CorDBIPC_BUFFER_SIZE];
+    e = (DebuggerIPCEvent *) buffer;
 
-        // If the RSEA is signaled, then handle the event from the Right Side.
-        memcpy(e, GetIPCEventReceiveBuffer(), CorDBIPC_BUFFER_SIZE);
-#ifdef FEATURE_DBGIPC_TRANSPORT_VM
-    }
-    else
-    {
-        // Be sure to fetch the event into the official receive buffer since some event handlers assume it's there
-        // regardless of the the event buffer pointer passed to them.
-        e = GetIPCEventReceiveBuffer();
-        g_pDbgTransport->GetNextEvent(e, CorDBIPC_BUFFER_SIZE);
-    }
+    // If the RSEA is signaled, then handle the event from the Right Side.
+    memcpy(e, GetIPCEventReceiveBuffer(), CorDBIPC_BUFFER_SIZE);
+#else
+    // Be sure to fetch the event into the official receive buffer since some event handlers assume it's there
+    // regardless of the the event buffer pointer passed to them.
+    e = GetIPCEventReceiveBuffer();
+    g_pDbgTransport->GetNextEvent(e, CorDBIPC_BUFFER_SIZE);
 #endif // !FEATURE_DBGIPC_TRANSPOPRT
 
-#if defined(FEATURE_DBGIPC_TRANSPORT_VM)
-    if(!useTransport)
+#if !defined(FEATURE_DBGIPC_TRANSPORT_VM)
+    // If no reply is required, then let the Right Side go since we've got a copy of the event now.
+    _ASSERTE(!e->asyncSend || !e->replyRequired);
+
+    if (!e->replyRequired && !e->asyncSend)
     {
-#endif
-        // If no reply is required, then let the Right Side go since we've got a copy of the event now.
-        _ASSERTE(!e->asyncSend || !e->replyRequired);
+        LOG((LF_CORDB, LL_INFO1000, "DRCT::ML: no reply required, letting Right Side go.\n"));
 
-        if (!e->replyRequired && !e->asyncSend)
-        {
-            LOG((LF_CORDB, LL_INFO1000, "DRCT::ML: no reply required, letting Right Side go.\n"));
+        BOOL succ = SetEvent(m_pDCB->m_rightSideEventRead);
 
-            BOOL succ = SetEvent(m_pDCB->m_rightSideEventRead);
-
-            if (!succ)
-                CORDBDebuggerSetUnrecoverableWin32Error(m_debugger, 0, true);
-        }
-#ifdef LOGGING
-        else if (e->asyncSend)
-            LOG((LF_CORDB, LL_INFO1000, "DRCT::ML: async send.\n"));
-        else
-            LOG((LF_CORDB, LL_INFO1000, "DRCT::ML: reply required, holding Right Side...\n"));
-#endif
-#ifdef FEATURE_DBGIPC_TRANSPORT_VM
+        if (!succ)
+            CORDBDebuggerSetUnrecoverableWin32Error(m_debugger, 0, true);
     }
-#endif // FEATURE_DBGIPC_TRANSPORT_VM
+#ifdef LOGGING
+    else if (e->asyncSend)
+        LOG((LF_CORDB, LL_INFO1000, "DRCT::ML: async send.\n"));
+    else
+        LOG((LF_CORDB, LL_INFO1000, "DRCT::ML: reply required, holding Right Side...\n"));
+#endif
+#endif // !FEATURE_DBGIPC_TRANSPORT_VM
 
     // Pass the event to the debugger for handling. Returns true if the event was a Continue event and we can
     // stop looking for stragglers.  We wrap this whole thing in an exception handler to help us debug faults.
@@ -1211,7 +1125,7 @@ void DebuggerRCThread::MainLoop()
 
     LOG((LF_CORDB, LL_INFO1000, "DRCT::ML:: running main loop\n"));
 
-    // Anbody doing helper duty is in a can't-stop range, period.
+    // Anybody doing helper duty is in a can't-stop range, period.
     // Our helper thread is already in a can't-stop range, so this is particularly useful for
     // threads doing helper duty.
     CantStopHolder cantStopHolder;
@@ -1227,18 +1141,10 @@ void DebuggerRCThread::MainLoop()
     DWORD dwWaitTimeout = INFINITE;
     rghWaitSet[DRCT_CONTROL_EVENT] = m_threadControlEvent;
     rghWaitSet[DRCT_FAVORAVAIL] = GetFavorAvailableEvent();
-#if defined(FEATURE_DBGIPC_TRANSPORT_VM)
-    DWORD useTransport = CLRConfig::GetConfigValue(CLRConfig::UNSUPPORTED_DbgUseTransport);
-    if(!useTransport)
-    {
-#endif  // !FEATURE_DBGIPC_TRANSPORT_VM
-        rghWaitSet[DRCT_RSEA] = m_pDCB->m_rightSideEventAvailable;
-#ifdef FEATURE_DBGIPC_TRANSPORT_VM
-    }
-    else
-    {
-        rghWaitSet[DRCT_RSEA] = g_pDbgTransport->GetIPCEventReadyEvent();
-    }
+#if !defined(FEATURE_DBGIPC_TRANSPORT_VM)
+    rghWaitSet[DRCT_RSEA] = m_pDCB->m_rightSideEventAvailable;
+#else
+    rghWaitSet[DRCT_RSEA] = g_pDbgTransport->GetIPCEventReadyEvent();
 #endif // !FEATURE_DBGIPC_TRANSPORT_VM
 
     CONTRACT_VIOLATION(ThrowsViolation);// HndCreateHandle throws, and this loop is not backstopped by any EH
@@ -1251,38 +1157,28 @@ void DebuggerRCThread::MainLoop()
     {
         LOG((LF_CORDB, LL_INFO1000, "DRCT::ML: waiting for event.\n"));
 
-#if defined(FEATURE_DBGIPC_TRANSPORT_VM)
-        DWORD useTransport = CLRConfig::GetConfigValue(CLRConfig::UNSUPPORTED_DbgUseTransport);
-        if(!useTransport)
+#if !defined(FEATURE_DBGIPC_TRANSPORT_VM)
+        // If there is a debugger attached, wait on its handle, too...
+        if ((cWaitCount == DRCT_COUNT_INITIAL) && 
+            m_pDCB->m_rightSideProcessHandle.ImportToLocalProcess() != NULL)
         {
-#endif // FEATURE_DBGIPC_TRANSPORT_VM
-            // If there is a debugger attached, wait on its handle, too...
-            if ((cWaitCount == DRCT_COUNT_INITIAL) && 
-                m_pDCB->m_rightSideProcessHandle.ImportToLocalProcess() != NULL)
-            {
-                _ASSERTE((cWaitCount + 1) == DRCT_COUNT_FINAL);
-                rghWaitSet[DRCT_DEBUGGER_EVENT] = m_pDCB->m_rightSideProcessHandle;
-                cWaitCount = DRCT_COUNT_FINAL;
-            }
-#ifdef FEATURE_DBGIPC_TRANSPORT_VM
+            _ASSERTE((cWaitCount + 1) == DRCT_COUNT_FINAL);
+            rghWaitSet[DRCT_DEBUGGER_EVENT] = m_pDCB->m_rightSideProcessHandle;
+            cWaitCount = DRCT_COUNT_FINAL;
         }
-#endif // FEATURE_DBGIPC_TRANSPORT_VM
+#endif // !FEATURE_DBGIPC_TRANSPORT_VM
+
 
         if (m_fDetachRightSide)
         {
             m_fDetachRightSide = false;
 
-#if defined(FEATURE_DBGIPC_TRANSPORT_VM)
-            if(!useTransport)
-            {
-#endif
-                _ASSERTE(cWaitCount == DRCT_COUNT_FINAL);
-                _ASSERTE((cWaitCount - 1) == DRCT_COUNT_INITIAL);
+#if !defined(FEATURE_DBGIPC_TRANSPORT_VM)
+            _ASSERTE(cWaitCount == DRCT_COUNT_FINAL);
+            _ASSERTE((cWaitCount - 1) == DRCT_COUNT_INITIAL);
 
-                rghWaitSet[DRCT_DEBUGGER_EVENT] = NULL;
-                cWaitCount = DRCT_COUNT_INITIAL;
-#if defined(FEATURE_DBGIPC_TRANSPORT_VM)
-            }
+            rghWaitSet[DRCT_DEBUGGER_EVENT] = NULL;
+            cWaitCount = DRCT_COUNT_INITIAL;
 #endif // !FEATURE_DBGIPC_TRANSPORT_VM
         }
 
@@ -1475,7 +1371,7 @@ void DebuggerRCThread::TemporaryHelperThreadMainLoop()
     CONTRACTL_END;
 
     STRESS_LOG0(LF_CORDB, LL_INFO1000, "DRCT::THTML:: Doing helper thread duty, running main loop.\n");
-    // Anbody doing helper duty is in a can't-stop range, period.
+    // Anybody doing helper duty is in a can't-stop range, period.
     // Our helper thread is already in a can't-stop range, so this is particularly useful for
     // threads doing helper duty.
     CantStopHolder cantStopHolder;
@@ -1491,18 +1387,10 @@ void DebuggerRCThread::TemporaryHelperThreadMainLoop()
     DWORD dwWaitTimeout = INFINITE;
     rghWaitSet[DRCT_CONTROL_EVENT] = m_threadControlEvent;
     rghWaitSet[DRCT_FAVORAVAIL] = GetFavorAvailableEvent();
-#if defined(FEATURE_DBGIPC_TRANSPORT_VM)
-    DWORD useTransport = CLRConfig::GetConfigValue(CLRConfig::UNSUPPORTED_DbgUseTransport);
-    if(!useTransport)
-    {
-#endif
-        rghWaitSet[DRCT_RSEA] = m_pDCB->m_rightSideEventAvailable;
-#ifdef FEATURE_DBGIPC_TRANSPORT_VM 
-    }
-    else
-    {
-        rghWaitSet[DRCT_RSEA] = g_pDbgTransport->GetIPCEventReadyEvent();
-    }
+#if !defined(FEATURE_DBGIPC_TRANSPORT_VM)
+    rghWaitSet[DRCT_RSEA] = m_pDCB->m_rightSideEventAvailable;
+#else //FEATURE_DBGIPC_TRANSPORT_VM 
+    rghWaitSet[DRCT_RSEA] = g_pDbgTransport->GetIPCEventReadyEvent();
 #endif // !FEATURE_DBGIPC_TRANSPORT_VM
 
     CONTRACT_VIOLATION(ThrowsViolation);// HndCreateHandle throws, and this loop is not backstopped by any EH
@@ -2153,31 +2041,23 @@ HRESULT DebuggerRCThread::SendIPCReply()
          IPCENames::GetName(event->type)));
 #endif
 
-#if defined(FEATURE_DBGIPC_TRANSPORT_VM)
-    DWORD useTransport = CLRConfig::GetConfigValue(CLRConfig::UNSUPPORTED_DbgUseTransport);
-    if(!useTransport)
+#if !defined(FEATURE_DBGIPC_TRANSPORT_VM)
+    BOOL succ = SetEvent(m_pDCB->m_rightSideEventRead);
+    if (!succ)
     {
-#endif
-        BOOL succ = SetEvent(m_pDCB->m_rightSideEventRead);
-        if (!succ)
-        {
-            hr = CORDBDebuggerSetUnrecoverableWin32Error(m_debugger, 0, false);
-        }
-#ifdef FEATURE_DBGIPC_TRANSPORT_VM
+        hr = CORDBDebuggerSetUnrecoverableWin32Error(m_debugger, 0, false);
     }
-    else
+#else // !FEATURE_DBGIPC_TRANSPORT_VM
+    hr = g_pDbgTransport->SendEvent(GetIPCEventReceiveBuffer());
+    if (FAILED(hr))
     {
-        hr = g_pDbgTransport->SendEvent(GetIPCEventReceiveBuffer());
-        if (FAILED(hr))
-        {
-            m_debugger->UnrecoverableError(hr,
-                0,
-                __FILE__,
-                __LINE__,
-                false);
-        }
+        m_debugger->UnrecoverableError(hr,
+            0,
+            __FILE__,
+            __LINE__,
+            false);
     }
-#endif // FEATURE_DBGIPC_TRANSPORT_VM
+#endif // !FEATURE_DBGIPC_TRANSPORT_VM
 
     return hr;
 }

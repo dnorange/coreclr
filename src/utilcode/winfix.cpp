@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //*****************************************************************************
 // WinWrap.cpp
 //
@@ -22,6 +21,7 @@
 #include "holder.h"
 #include "ndpversion.h"
 #include "pedecoder.h"
+
 
 // ====== READ BEFORE ADDING CONTRACTS ==================================================
 // The functions in this file propagate SetLastError codes to their callers.
@@ -130,6 +130,61 @@ class WinWrapperContract
 #endif
 
 ULONG g_dwMaxDBCSCharByteSize = 0;
+
+// The only purpose of this function is to make a local copy of lpCommandLine.
+// Because windows implementation of CreateProcessW can actually change lpCommandLine,
+// but we'd like to keep it const.
+BOOL
+WszCreateProcess(
+    LPCWSTR lpApplicationName,
+    LPCWSTR lpCommandLine,
+    LPSECURITY_ATTRIBUTES lpProcessAttributes,
+    LPSECURITY_ATTRIBUTES lpThreadAttributes,
+    BOOL bInheritHandles,
+    DWORD dwCreationFlags,
+    LPVOID lpEnvironment,
+    LPCWSTR lpCurrentDirectory,
+    LPSTARTUPINFOW lpStartupInfo,
+    LPPROCESS_INFORMATION lpProcessInformation
+    )
+{
+    WINWRAPPER_NO_CONTRACT(SetLastError(ERROR_OUTOFMEMORY); return 0;);
+
+    BOOL fResult;
+    DWORD err;
+    {
+        size_t commandLineLength = wcslen(lpCommandLine) + 1;
+        NewArrayHolder<WCHAR> nonConstCommandLine(new (nothrow) WCHAR[commandLineLength]);
+        if (nonConstCommandLine == NULL)
+        {
+            SetLastError(ERROR_OUTOFMEMORY);
+            return 0;
+        }
+            
+        memcpy(nonConstCommandLine, lpCommandLine, commandLineLength * sizeof(WCHAR));
+            
+        fResult = CreateProcessW(lpApplicationName,
+                                   nonConstCommandLine,
+                                   lpProcessAttributes,
+                                   lpThreadAttributes,
+                                   bInheritHandles,
+                                   dwCreationFlags,
+                                   lpEnvironment,
+                                   (LPWSTR)lpCurrentDirectory,
+                                   lpStartupInfo,
+                                   lpProcessInformation);
+
+        // At the end of the current scope, the last error code will be overwritten by the destructor of
+        // NewArrayHolder. So we save the error code here, and restore it after the end of the current scope.
+        err = GetLastError();
+    }
+
+    SetLastError(err);
+    return fResult;
+}
+
+#ifndef FEATURE_PAL
+
 
 #include "psapi.h"
 #include "tlhelp32.h"
@@ -371,145 +426,44 @@ lExit:
     
 }
 
-BOOL
-WszCreateProcess(
-    LPCWSTR lpApplicationName,
-    LPCWSTR lpCommandLine,
-    LPSECURITY_ATTRIBUTES lpProcessAttributes,
-    LPSECURITY_ATTRIBUTES lpThreadAttributes,
-    BOOL bInheritHandles,
-    DWORD dwCreationFlags,
-    LPVOID lpEnvironment,
-    LPCWSTR lpCurrentDirectory,
-    LPSTARTUPINFOW lpStartupInfo,
-    LPPROCESS_INFORMATION lpProcessInformation
-    )
+typedef HRESULT(WINAPI *pfnSetThreadDescription)(HANDLE hThread, PCWSTR lpThreadDescription);
+extern pfnSetThreadDescription g_pfnSetThreadDescription;
+
+// Dummy method if windows version does not support it
+HRESULT SetThreadDescriptionDummy(HANDLE hThread, PCWSTR lpThreadDescription)
 {
-    WINWRAPPER_NO_CONTRACT(SetLastError(ERROR_OUTOFMEMORY); return 0;);
-
-    BOOL fResult;
-    DWORD err;
-    {
-        size_t commandLineLength = wcslen(lpCommandLine) + 1;
-        NewArrayHolder<WCHAR> nonConstCommandLine(new (nothrow) WCHAR[commandLineLength]);
-        if (nonConstCommandLine == NULL)
-        {
-            SetLastError(ERROR_OUTOFMEMORY);
-            return 0;
-        }
-            
-        memcpy(nonConstCommandLine, lpCommandLine, commandLineLength * sizeof(WCHAR));
-            
-        fResult = CreateProcessW(lpApplicationName,
-                                   nonConstCommandLine,
-                                   lpProcessAttributes,
-                                   lpThreadAttributes,
-                                   bInheritHandles,
-                                   dwCreationFlags,
-                                   lpEnvironment,
-                                   (LPWSTR)lpCurrentDirectory,
-                                   lpStartupInfo,
-                                   lpProcessInformation);
-
-        // At the end of the current scope, the last error code will be overwritten by the destructor of
-        // NewArrayHolder. So we save the error code here, and restore it after the end of the current scope.
-        err = GetLastError();
-    }
-
-    SetLastError(err);
-    return fResult;
+    return NOERROR;
 }
 
-
-DWORD
-WszGetWorkingSet()
+HRESULT WINAPI InitializeSetThreadDescription(HANDLE hThread, PCWSTR lpThreadDescription)
 {
-    WINWRAPPER_NO_CONTRACT(SetLastError(ERROR_OUTOFMEMORY); return 0;);
+    HMODULE hKernel32 = WszLoadLibrary(W("kernel32.dll"));
 
-    DWORD dwMemUsage = 0;
-
-    // Consider also calling GetProcessWorkingSetSize to get the min & max working
-    // set size.  I don't know how to get the current working set though...
-    PROCESS_MEMORY_COUNTERS pmc;
-
-    HINSTANCE hPSapi;
-    typedef BOOL (GET_PROCESS_MEMORY_INFO)(HANDLE, PROCESS_MEMORY_COUNTERS*, DWORD);
-    GET_PROCESS_MEMORY_INFO* pGetProcessMemoryInfo;
-
-    hPSapi = WszLoadLibrary(W("psapi.dll"));
-    if (hPSapi == NULL) {
-        _ASSERTE(0);
-        return 0;
+    pfnSetThreadDescription pLocal = NULL; 
+    if (hKernel32 != NULL)
+    {
+        // store to thread local variable to prevent data race
+        pLocal = (pfnSetThreadDescription)GetProcAddress(hKernel32, "SetThreadDescription");
     }
 
-    pGetProcessMemoryInfo =
-        (GET_PROCESS_MEMORY_INFO*)GetProcAddress(hPSapi, "GetProcessMemoryInfo");
-    // 403746: Prefix correctly complained about
-    // pGetProcessMemoryInfo != NULL assertion.
-    if (pGetProcessMemoryInfo == NULL) {
-        _ASSERTE(0);
-        FreeLibrary(hPSapi);
-        return 0;
+    if (pLocal == NULL) // method is only available with Windows 10 Creators Update or later
+    {
+        g_pfnSetThreadDescription = SetThreadDescriptionDummy;
     }
-    PREFIX_ASSUME(pGetProcessMemoryInfo != NULL);
+    else
+    {
+        g_pfnSetThreadDescription = pLocal;
+    }
 
-    BOOL r = pGetProcessMemoryInfo(GetCurrentProcess(), &pmc, (DWORD) sizeof(PROCESS_MEMORY_COUNTERS));
-    FreeLibrary(hPSapi);
-    _ASSERTE(r);
-
-    dwMemUsage = (DWORD)pmc.WorkingSetSize;
-
-    return dwMemUsage;
+    return g_pfnSetThreadDescription(hThread, lpThreadDescription);
 }
 
+pfnSetThreadDescription g_pfnSetThreadDescription = &InitializeSetThreadDescription;
 
-SIZE_T
-WszGetPagefileUsage()
+// Set unmanaged thread name which will show up in ETW and Debuggers which know how to read this data.
+HRESULT SetThreadName(HANDLE hThread, PCWSTR lpThreadDescription)
 {
-    WINWRAPPER_NO_CONTRACT(SetLastError(ERROR_OUTOFMEMORY); return 0;);
-
-    SIZE_T dwPagefileUsage = 0;
-
-    typedef BOOL (WINAPI FnGetProcessMemoryInfo)(HANDLE, PROCESS_MEMORY_COUNTERS *, DWORD);
-
-    HMODULE hPSApi = WszLoadLibrary(W("Psapi.dll"));
-    if (hPSApi== NULL)
-    {
-        return 0;
-    }
-
-    FnGetProcessMemoryInfo *pfnGetProcessMemoryInfo = reinterpret_cast<FnGetProcessMemoryInfo *>(
-        GetProcAddress(hPSApi, "GetProcessMemoryInfo"));
-
-    if (pfnGetProcessMemoryInfo != NULL)
-    {
-        PROCESS_MEMORY_COUNTERS pmc;
-        ZeroMemory(&pmc, sizeof(pmc));
-
-        if (pfnGetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc)))
-        {
-            dwPagefileUsage = pmc.PagefileUsage;
-        }
-    }
-
-    FreeLibrary(hPSApi);
-    hPSApi = NULL;
-
-    return dwPagefileUsage;
+    return g_pfnSetThreadDescription(hThread, lpThreadDescription);
 }
 
-DWORD
-WszGetProcessHandleCount()
-{
-    WINWRAPPER_NO_CONTRACT(SetLastError(ERROR_OUTOFMEMORY); return 0;);
-
-    DWORD dwHandleCount = 0;
-
-    if (!GetProcessHandleCount(GetCurrentProcess(), &dwHandleCount))
-    {
-        dwHandleCount = 0;
-    }
-
-    return dwHandleCount;
-}
-
+#endif //!FEATURE_PAL

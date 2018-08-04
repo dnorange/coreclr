@@ -1,13 +1,16 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //
 // crosscomp.h - cross-compilation enablement structures.
 //
 
 
 #pragma once
+
+#if (!defined(_WIN64) && defined(_TARGET_64BIT_)) || (defined(_WIN64) && !defined(_TARGET_64BIT_))
+#define CROSSBITNESS_COMPILE
+#endif
 
 #if defined(_X86_) && defined(_TARGET_ARM_)      // Host X86 managing ARM related code
 
@@ -69,7 +72,7 @@ typedef struct DECLSPEC_ALIGN(8) _T_CONTEXT {
         NEON128 Q[16];
         ULONGLONG D[32];
         DWORD S[32];
-    } DUMMYUNIONNAME;
+    };
 
     //
     // Debug registers
@@ -89,6 +92,7 @@ typedef struct DECLSPEC_ALIGN(8) _T_CONTEXT {
 // each frame function.
 //
 
+#ifndef FEATURE_PAL
 typedef struct _RUNTIME_FUNCTION {
     DWORD BeginAddress;
     DWORD UnwindData;
@@ -115,6 +119,7 @@ typedef struct _UNWIND_HISTORY_TABLE {
     DWORD HighAddress;
     UNWIND_HISTORY_TABLE_ENTRY Entry[UNWIND_HISTORY_TABLE_SIZE];
 } UNWIND_HISTORY_TABLE, *PUNWIND_HISTORY_TABLE;
+#endif // !FEATURE_PAL
 
 
 //
@@ -194,7 +199,7 @@ typedef union _NEON128 {
     struct {
         ULONGLONG Low;
         LONGLONG High;
-    } DUMMYSTRUCTNAME;
+    };
     double D[2];
     float S[4];
     WORD   H[8];
@@ -287,7 +292,7 @@ typedef struct _T_RUNTIME_FUNCTION {
             DWORD CR : 2;
             DWORD FrameSize : 9;
         } PackedUnwindData;
-    } DUMMYUNIONNAME;
+    };
 } T_RUNTIME_FUNCTION, *PT_RUNTIME_FUNCTION;
 
 
@@ -360,5 +365,5 @@ typedef struct _T_KNONVOLATILE_CONTEXT_POINTERS {
 
 
 #ifdef CROSSGEN_COMPILE
-void CrossGenNotSupported(char * message);
+void CrossGenNotSupported(const char * message);
 #endif

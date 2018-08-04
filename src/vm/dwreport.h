@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //
 // FILE: dwreport.h
 //
@@ -53,13 +52,11 @@ FaultReportResult DoFaultReport(            // Was Watson attempted, successful?
     EXCEPTION_POINTERS *pExceptionInfo,     // Information about the fault.
     TypeOfReportedError tore);              // What sort of error is reported.
 
-BOOL InitializeWatson(COINITIEE fFlags);
-BOOL InitializeWatsonVersionInfo(LPCSTR pVer);
 BOOL IsWatsonEnabled();
 BOOL RegisterOutOfProcessWatsonCallbacks();
 
 int DwGetAssemblyVersion(               // Number of characters written.
-    __in_z LPWSTR  wszFilePath,         // Path to the executable.
+    __in_z LPCWSTR  wszFilePath,         // Path to the executable.
     __inout_ecount(cchBuf) WCHAR *pBuf, // Put description here.
     int cchBuf);
 
@@ -81,10 +78,6 @@ struct ResetWatsonBucketsParams
 void ResetWatsonBucketsFavorWorker(void * pParam);
 
 extern LONG g_watsonAlreadyLaunched;
-
-#if !defined(FEATURE_UEF_CHAINMANAGER)
-extern HandleHolder g_hWatsonCompletionEvent;
-#endif // FEATURE_UEF_CHAINMANAGER
 
 //----------------------------------------------------------------------------
 // Passes data between DoFaultReport and DoFaultReportCallback

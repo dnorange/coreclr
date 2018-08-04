@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //
 
 
@@ -17,7 +16,7 @@ BOOL EEHashTableBase<KeyType, Helper, bDefaultCopyIsDeep>::OwnLock()
         return TRUE;
 
     if (m_pfnLockOwner == NULL) {
-        return m_writerThreadId.IsSameThread();
+        return m_writerThreadId.IsCurrentThread();
     }
     else {
         BOOL ret = m_pfnLockOwner(m_lockData);
@@ -80,7 +79,7 @@ void EEHashTableBase<KeyType, Helper, bDefaultCopyIsDeep>::ClearHashTable()
     
     // Transition to COOP mode. This is need because EEHashTable is lock free and it can be read 
     // from multiple threads without taking locks. On rehash, you want to get rid of the old copy 
-    // of table. You can only get rid of it once nobody is using it. That’s a problem because 
+    // of table. You can only get rid of it once nobody is using it. That's a problem because 
     // there is no lock to tell when the last reader stopped using the old copy of the table.
     // The solution to this problem is to access the table in cooperative mode, and to get rid of 
     // the old copy of the table when we are suspended for GC. When we are suspended for GC, 
@@ -126,7 +125,7 @@ void EEHashTableBase<KeyType, Helper, bDefaultCopyIsDeep>::EmptyHashTable()
     
     // Transition to COOP mode. This is need because EEHashTable is lock free and it can be read 
     // from multiple threads without taking locks. On rehash, you want to get rid of the old copy 
-    // of table. You can only get rid of it once nobody is using it. That’s a problem because 
+    // of table. You can only get rid of it once nobody is using it. That's a problem because 
     // there is no lock to tell when the last reader stopped using the old copy of the table.
     // The solution to this problem is to access the table in cooperative mode, and to get rid of 
     // the old copy of the table when we are suspended for GC. When we are suspended for GC, 
@@ -211,7 +210,7 @@ BOOL EEHashTableBase<KeyType, Helper, bDefaultCopyIsDeep>::Init(DWORD dwNumBucke
     }
 
     if (m_pfnLockOwner == NULL) {
-        m_writerThreadId.SetThreadId();
+        m_writerThreadId.SetToCurrentThread();
     }
     m_CheckThreadSafety = CheckThreadSafety;
 #endif
@@ -237,7 +236,7 @@ void EEHashTableBase<KeyType, Helper, bDefaultCopyIsDeep>::InsertValue(KeyType p
     
     // Transition to COOP mode. This is need because EEHashTable is lock free and it can be read 
     // from multiple threads without taking locks. On rehash, you want to get rid of the old copy 
-    // of table. You can only get rid of it once nobody is using it. That’s a problem because 
+    // of table. You can only get rid of it once nobody is using it. That's a problem because 
     // there is no lock to tell when the last reader stopped using the old copy of the table.
     // The solution to this problem is to access the table in cooperative mode, and to get rid of 
     // the old copy of the table when we are suspended for GC. When we are suspended for GC, 
@@ -291,7 +290,7 @@ void EEHashTableBase<KeyType, Helper, bDefaultCopyIsDeep>::InsertKeyAsValue(KeyT
     
     // Transition to COOP mode. This is need because EEHashTable is lock free and it can be read 
     // from multiple threads without taking locks. On rehash, you want to get rid of the old copy 
-    // of table. You can only get rid of it once nobody is using it. That’s a problem because 
+    // of table. You can only get rid of it once nobody is using it. That's a problem because 
     // there is no lock to tell when the last reader stopped using the old copy of the table.
     // The solution to this problem is to access the table in cooperative mode, and to get rid of 
     // the old copy of the table when we are suspended for GC. When we are suspended for GC, 
@@ -543,7 +542,7 @@ EEHashEntry_t *EEHashTableBase<KeyType, Helper, bDefaultCopyIsDeep>::FindItem(Ke
 
     // Transition to COOP mode. This is need because EEHashTable is lock free and it can be read 
     // from multiple threads without taking locks. On rehash, you want to get rid of the old copy 
-    // of table. You can only get rid of it once nobody is using it. That’s a problem because 
+    // of table. You can only get rid of it once nobody is using it. That's a problem because 
     // there is no lock to tell when the last reader stopped using the old copy of the table.
     // The solution to this problem is to access the table in cooperative mode, and to get rid of 
     // the old copy of the table when we are suspended for GC. When we are suspended for GC, 

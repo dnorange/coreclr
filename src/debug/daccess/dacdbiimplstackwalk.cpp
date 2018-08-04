@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //
 // DacDbiImplStackWalk.cpp
 // 
@@ -55,7 +54,7 @@ public:
 };
 
 // Helper to allocate stackwalk datastructures for given parameters.
-// This is allocated on the local heap (and not via the forDbi allocatoror on the dac-cache), and then 
+// This is allocated on the local heap (and not via the forDbi allocator on the dac-cache), and then 
 // freed via code:DacDbiInterfaceImpl::DeleteStackWalk
 // 
 // Throws on error (mainly OOM).
@@ -1003,7 +1002,7 @@ ULONG32 DacDbiInterfaceImpl::GetStackParameterSize(EECodeInfo * pCodeInfo)
 //
 //    There are only two transition cases where we can reliably adjust for the callee stack parameter size:
 //    1) when the debugger calls SetContext() with the CONTEXT of the first managed stack frame in a 
-//       managed stack chain (i.e. SetContext() with M2’s CONTEXT)
+//       managed stack chain (i.e. SetContext() with M2's CONTEXT)
 //      - the M2U transition is protected by an explicit frame (aka Frame-chain frame)
 //    2) when the debugger calls GetContext() on the first native stack frame in a native stack chain 
 //       (i.e. GetContext() at U0)
@@ -1153,18 +1152,18 @@ CorDebugInternalFrameType DacDbiInterfaceImpl::GetInternalFrameType(Frame * pFra
 void DacDbiInterfaceImpl::UpdateContextFromRegDisp(REGDISPLAY * pRegDisp,
                                                    T_CONTEXT *  pContext)
 {
-#if defined(_TARGET_X86_)
+#if defined(_TARGET_X86_) && !defined(WIN64EXCEPTIONS)
     // Do a partial copy first.
     pContext->ContextFlags = (CONTEXT_INTEGER | CONTEXT_CONTROL);
 
-    pContext->Edi = *pRegDisp->pEdi;
-    pContext->Esi = *pRegDisp->pEsi;
-    pContext->Ebx = *pRegDisp->pEbx;
-    pContext->Ebp = *pRegDisp->pEbp;
-    pContext->Eax = *pRegDisp->pEax;
-    pContext->Ecx = *pRegDisp->pEcx;
-    pContext->Edx = *pRegDisp->pEdx;
-    pContext->Esp = pRegDisp->Esp;
+    pContext->Edi = *pRegDisp->GetEdiLocation();
+    pContext->Esi = *pRegDisp->GetEsiLocation();
+    pContext->Ebx = *pRegDisp->GetEbxLocation();
+    pContext->Ebp = *pRegDisp->GetEbpLocation();
+    pContext->Eax = *pRegDisp->GetEaxLocation();
+    pContext->Ecx = *pRegDisp->GetEcxLocation();
+    pContext->Edx = *pRegDisp->GetEdxLocation();
+    pContext->Esp = pRegDisp->SP;
     pContext->Eip = pRegDisp->ControlPC;
 
     // If we still have the pointer to the leaf CONTEXT, and the leaf CONTEXT is the same as the CONTEXT for
@@ -1175,15 +1174,9 @@ void DacDbiInterfaceImpl::UpdateContextFromRegDisp(REGDISPLAY * pRegDisp,
     {
         *pContext = *pRegDisp->pContext;
     }
-
-#elif defined(_WIN64) || defined(_TARGET_ARM_)
+#else // _TARGET_X86_ && !WIN64EXCEPTIONS
     *pContext = *pRegDisp->pCurrentContext;
-
-#else  // !_TARGET_X86_ && !_WIN64
-    _ASSERTE(!"DDII::UpdateContextFromRegDisplay() - NYI on this platform\n");
-    ThrowHR(E_NOTIMPL);
-
-#endif // !_TARGET_X86_ && !_WIN64
+#endif // !_TARGET_X86_ || WIN64EXCEPTIONS
 }
 
 //---------------------------------------------------------------------------------------

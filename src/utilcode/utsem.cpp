@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 /******************************************************************************
     FILE : UTSEM.CPP
 
@@ -23,10 +22,10 @@ Revision History:
 #include "contract.h"
 
 // Consider replacing this with a #ifdef INTEROP_DEBUGGING
-#if !defined(SELF_NO_HOST) && defined(_TARGET_X86_)
+#if !defined(SELF_NO_HOST) && defined(_TARGET_X86_) && !defined(FEATURE_PAL)
 // For Interop debugging, the UTSemReadWrite class must inform the debugger
 // that this thread can't be suspended currently.  See vm\util.hpp for the
-// implementation of these methods.  
+// implementation of these methods.
 void IncCantStopCount();
 void DecCantStopCount();
 #else
@@ -52,7 +51,7 @@ const ULONG READWAITERS_MASK  = 0x003FF000;    // field that counts number of th
 const ULONG READWAITERS_INCR  = 0x00001000;    // amount to add to increment number of read waiters
 
 const ULONG WRITEWAITERS_MASK = 0xFFC00000;    // field that counts number of threads waiting to write
-const ULONG WRITEWAITERS_INCR = 0x00400000;    // amoun to add to increment number of write waiters
+const ULONG WRITEWAITERS_INCR = 0x00400000;    // amount to add to increment number of write waiters
 
 // ======================================================================================
 // Spinning support
@@ -60,7 +59,7 @@ const ULONG WRITEWAITERS_INCR = 0x00400000;    // amoun to add to increment numb
 // Copy of definition from file:..\VM\spinlock.h
 #define CALLER_LIMITS_SPINNING 0
 
-#if defined(SELF_NO_HOST) && !defined(CROSSGEN_COMPILE)
+#if (defined(SELF_NO_HOST) && !defined(CROSSGEN_COMPILE)) || (defined(FEATURE_PAL) && defined(DACCESS_COMPILE))
 
 // When we do not have host, we just call OS - see file:..\VM\hosting.cpp#__SwitchToThread
 BOOL __SwitchToThread(DWORD dwSleepMSec, DWORD dwSwitchCount)
@@ -80,7 +79,8 @@ SpinConstants g_SpinConstants = {
     50,        // dwInitialDuration 
     40000,     // dwMaximumDuration - ideally (20000 * max(2, numProc)) ... updated in code:InitializeSpinConstants_NoHost
     3,         // dwBackoffFactor
-    10         // dwRepetitions
+    10,        // dwRepetitions
+    0          // dwMonitorSpinCount
 };
 
 inline void InitializeSpinConstants_NoHost()

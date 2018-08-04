@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 
 /*============================================================
@@ -24,9 +23,6 @@ class ThreadPoolNative
 {
 
 public:
-
-    static void Init();
-
     static FCDECL2(FC_BOOL_RET, CorSetMaxThreads, DWORD workerThreads, DWORD completionPortThreads);
     static FCDECL2(VOID, CorGetMaxThreads, DWORD* workerThreads, DWORD* completionPortThreads);
     static FCDECL2(FC_BOOL_RET, CorSetMinThreads, DWORD workerThreads, DWORD completionPortThreads);
@@ -40,17 +36,13 @@ public:
 
     static FCDECL1(void, ReportThreadStatus, CLR_BOOL isWorking);
 
-    static FCDECL0(FC_BOOL_RET, IsThreadPoolHosted);
 
-
-    static FCDECL7(LPVOID, CorRegisterWaitForSingleObject,
+    static FCDECL5(LPVOID, CorRegisterWaitForSingleObject,
                                 Object* waitObjectUNSAFE,
                                 Object* stateUNSAFE,
                                 UINT32 timeout,
                                 CLR_BOOL executeOnlyOnce,
-                                Object* registeredWaitObjectUNSAFE,
-                                StackCrawlMark* stackMark,
-                                CLR_BOOL compressStack);
+                                Object* registeredWaitObjectUNSAFE);
 
     static BOOL QCALLTYPE RequestWorkerThread();
 
@@ -63,12 +55,11 @@ public:
 class AppDomainTimerNative
 {
 public:
-    static HANDLE QCALLTYPE CreateAppDomainTimer(INT32 dueTime);
+    static HANDLE QCALLTYPE CreateAppDomainTimer(INT32 dueTime, INT32 timerId);
     static BOOL QCALLTYPE ChangeAppDomainTimer(HANDLE hTimer, INT32 dueTime);
     static BOOL QCALLTYPE DeleteAppDomainTimer(HANDLE hTimer);
 };
 
-void ResetThreadSecurityState(Thread* pThread);
 VOID QueueUserWorkItemManagedCallback(PVOID pArg);
 void WINAPI BindIoCompletionCallbackStub(DWORD ErrorCode,
                                          DWORD numBytesTransferred,
@@ -77,8 +68,5 @@ void SetAsyncResultProperties(
     OVERLAPPEDDATAREF overlapped,
     DWORD dwErrorCode, 
     DWORD dwNumBytes);
-
-// this holder resets our thread's security state
-typedef Holder<Thread*, DoNothing<Thread*>, ResetThreadSecurityState> ThreadSecurityStateHolder;
 
 #endif

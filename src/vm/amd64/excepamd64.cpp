@@ -1,8 +1,8 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
-/*  EXCEP.CPP:  Copyright (C) 1998 Microsoft Corporation
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
+
+/*  EXCEP.CPP
  *
  */
 //
@@ -21,7 +21,7 @@
 #include "comutilnative.h"
 #include "sigformat.h"
 #include "siginfo.hpp"
-#include "gc.h"
+#include "gcheaputilities.h"
 #include "eedbginterfaceimpl.h" //so we can clearexception in COMPlusThrow
 #include "perfcounters.h"
 #include "asmconstants.h"
@@ -35,11 +35,6 @@
 VOID ResetCurrentContext()
 {
     LIMITED_METHOD_CONTRACT;
-}
-
-bool IsInstrModifyFault(PEXCEPTION_POINTERS pExceptionInfo)
-{
-    return false;
 }
 
 LONG CLRNoCatchHandler(EXCEPTION_POINTERS* pExceptionInfo, PVOID pv)
@@ -152,7 +147,7 @@ RtlVirtualUnwind (
           IN ULONG HandlerType,
           IN ULONG64 ImageBase,
           IN ULONG64 ControlPc,
-          IN PRUNTIME_FUNCTION FunctionEntry,
+          IN PT_RUNTIME_FUNCTION FunctionEntry,
           IN OUT PCONTEXT ContextRecord,
           OUT PVOID *HandlerData,
           OUT PULONG64 EstablisherFrame,
@@ -170,8 +165,6 @@ RtlVirtualUnwind (
     // The indirection should be taken care of by the caller 
     _ASSERTE((FunctionEntry->UnwindData & RUNTIME_FUNCTION_INDIRECT) == 0);
 
-#ifndef FEATURE_PAL    
-
 #ifdef DEBUGGING_SUPPORTED
     if (CORDebuggerAttached())
     {
@@ -182,21 +175,15 @@ RtlVirtualUnwind (
     {
         return RtlVirtualUnwind_Unsafe(HandlerType, ImageBase, ControlPc, FunctionEntry, ContextRecord, HandlerData, EstablisherFrame, ContextPointers);        
     }
-
-#else // !FEATURE_PAL
-    PORTABILITY_ASSERT("UNIXTODO: Implement unwinding for PAL");
-    return NULL;
-#endif // !FEATURE_PAL
 }
 
-#ifndef FEATURE_PAL    
 #ifdef DEBUGGING_SUPPORTED
 PEXCEPTION_ROUTINE
 RtlVirtualUnwind_Worker (
           IN ULONG HandlerType,
           IN ULONG64 ImageBase,
           IN ULONG64 ControlPc,
-          IN PRUNTIME_FUNCTION FunctionEntry,
+          IN PT_RUNTIME_FUNCTION FunctionEntry,
           IN OUT PCONTEXT ContextRecord,
           OUT PVOID *HandlerData,
           OUT PULONG64 EstablisherFrame,
@@ -443,7 +430,7 @@ RtlVirtualUnwind_Worker (
         // as well as a single byte representation of the Function code so that tests to make sure
         // that we're out of the prologue will not fail. 
     
-        RUNTIME_FUNCTION FakeFunctionEntry;
+        T_RUNTIME_FUNCTION FakeFunctionEntry;
 
         //
         // The buffer contains 4 sections
@@ -561,7 +548,6 @@ NORMAL_UNWIND:
     return RtlVirtualUnwind_Unsafe(HandlerType, ImageBase, ControlPc, FunctionEntry, ContextRecord, HandlerData, EstablisherFrame, ContextPointers);
 }
 #endif // DEBUGGING_SUPPORTED
-#endif // !FEATURE_PAL
 
 #undef FAKE_PROLOG_SIZE
 #undef FAKE_FUNCTION_CODE_SIZE

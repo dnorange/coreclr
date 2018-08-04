@@ -1,276 +1,323 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
-/*****************************************************************************/
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 #ifndef _ALLOC_H_
 #define _ALLOC_H_
-/*****************************************************************************/
-#ifndef _HOST_H_
+
+#if !defined(_HOST_H_)
 #include "host.h"
-#endif
-/*****************************************************************************/
+#endif // defined(_HOST_H_)
 
-#ifdef _MSC_VER
-#pragma warning(disable:4200)
-#endif
+// CompMemKind values are used to tag memory allocations performed via
+// the compiler's allocator so that the memory usage of various compiler
+// components can be tracked separately (when MEASURE_MEM_ALLOC is defined).
 
-/*****************************************************************************/
-#if defined(DEBUG)
-
-#include "malloc.h"
-
-inline void * DbgNew(size_t size)
+enum CompMemKind
 {
-    return ClrAllocInProcessHeap(0, S_SIZE_T(size));
-}
-
-inline void DbgDelete(void * ptr)
-{
-    (void)ClrFreeInProcessHeap(0, ptr);
-}
-
-// technically we can use these, we just have to insure that
-//  1) we can clean up.  2) we check out of memory conditions
-// Outlawing them is easier, if you need some memory for debug-only
-// stuff, define a special new operator with a dummy arg
-
-#define __OPERATOR_NEW_INLINE 1         // indicate that I have defined these 
-#ifdef _MSC_VER
-static inline void * __cdecl operator new(size_t n)
-{
-    assert(!"use JIT memory allocators");
-    return(0);
-}
-static inline void * __cdecl operator new[](size_t n)
-{
-    assert(!"use JIT memory allocators ");
-    return(0);
-};
-static inline void __cdecl operator delete(void * p)
-{
-    assert(!"use JIT memory allocators ");
-};
-static inline void __cdecl operator delete[](void * p)
-{
-    assert(!"use JIT memory allocators ");
-}
-#endif // _MSC_VER
-#endif // DEBUG
-
-/*****************************************************************************/
-
-struct nraMarkDsc
-
-{
-    void    *       nmPage;
-    BYTE    *       nmNext;
-    BYTE    *       nmLast;
+#define CompMemKindMacro(kind) CMK_##kind,
+#include "compmemkind.h"
+    CMK_Count
 };
 
-struct norls_allocator
+class ArenaAllocator
 {
 private:
-    struct norls_pagdesc
+    ArenaAllocator(const ArenaAllocator& other) = delete;
+    ArenaAllocator& operator=(const ArenaAllocator& other) = delete;
+    ArenaAllocator& operator=(ArenaAllocator&& other) = delete;
+
+    struct PageDescriptor
     {
-        norls_pagdesc * nrpNextPage;
-        norls_pagdesc * nrpPrevPage;
-#ifdef DEBUG
-        void    *       nrpSelfPtr;
-#endif
-        size_t          nrpPageSize;    // # of bytes allocated
-        size_t          nrpUsedSize;    // # of bytes actually used. (This is only valid when we've allocated a new page.)
-                                        // See norls_allocator::nraAllocNewPage.
-        BYTE            nrpContents[];
+        PageDescriptor* m_next;
+
+        size_t m_pageBytes; // # of bytes allocated
+        size_t m_usedBytes; // # of bytes actually used. (This is only valid when we've allocated a new page.)
+                            // See ArenaAllocator::allocateNewPage.
+
+        BYTE m_contents[];
     };
 
-    norls_pagdesc * nraPageList;
-    norls_pagdesc * nraPageLast;
+    enum
+    {
+        DEFAULT_PAGE_SIZE = 0x10000,
+    };
 
-    BYTE    *       nraFreeNext;        // these two (when non-zero) will
-    BYTE    *       nraFreeLast;        // always point into 'nraPageLast'
+    PageDescriptor* m_firstPage;
+    PageDescriptor* m_lastPage;
 
-    size_t          nraPageSize;
+    // These two pointers (when non-null) will always point into 'm_lastPage'.
+    BYTE* m_nextFreeByte;
+    BYTE* m_lastFreeByte;
 
-#ifdef DEBUG
-    bool            nraShouldInjectFault; // Should we inject fault?
-#endif
+    void* allocateNewPage(size_t size);
 
-    IEEMemoryManager* nraMemoryManager;
+    static void* allocateHostMemory(size_t size, size_t* pActualSize);
+    static void freeHostMemory(void* block, size_t size);
 
-    void    *       nraAllocNewPage(size_t sz);
+#if MEASURE_MEM_ALLOC
+    struct MemStats
+    {
+        unsigned allocCnt;                 // # of allocs
+        UINT64   allocSz;                  // total size of those alloc.
+        UINT64   allocSzMax;               // Maximum single allocation.
+        UINT64   allocSzByKind[CMK_Count]; // Classified by "kind".
+        UINT64   nraTotalSizeAlloc;
+        UINT64   nraTotalSizeUsed;
+
+        static const char* s_CompMemKindNames[]; // Names of the kinds.
+
+        void AddAlloc(size_t sz, CompMemKind cmk)
+        {
+            allocCnt += 1;
+            allocSz += sz;
+            if (sz > allocSzMax)
+            {
+                allocSzMax = sz;
+            }
+            allocSzByKind[cmk] += sz;
+        }
+
+        void Print(FILE* f);       // Print these stats to file.
+        void PrintByKind(FILE* f); // Do just the by-kind histogram part.
+    };
+
+    struct AggregateMemStats : public MemStats
+    {
+        unsigned nMethods;
+
+        void Add(const MemStats& ms)
+        {
+            nMethods++;
+            allocCnt += ms.allocCnt;
+            allocSz += ms.allocSz;
+            allocSzMax = max(allocSzMax, ms.allocSzMax);
+            for (int i = 0; i < CMK_Count; i++)
+            {
+                allocSzByKind[i] += ms.allocSzByKind[i];
+            }
+            nraTotalSizeAlloc += ms.nraTotalSizeAlloc;
+            nraTotalSizeUsed += ms.nraTotalSizeUsed;
+        }
+
+        void Print(FILE* f); // Print these stats to file.
+    };
 
 public:
-    // Anything less than 64K leaves VM holes since the OS allocates address space in this size.
-    // Thus if we want to make this smaller, we need to do a reserve / commit scheme
-    enum { DEFAULT_PAGE_SIZE = (16 * OS_page_size) };
-    enum { MIN_PAGE_SIZE = sizeof(norls_pagdesc) };
-
-    bool            nraInit (IEEMemoryManager* pMemoryManager, size_t pageSize = 0, int preAlloc = 0);
-
-    void            nraFree (void);
-
-    void    *       nraAlloc(size_t sz);
-
-    /* The following used for mark/release operation */
-
-    void            nraMark(nraMarkDsc &mark)
+    struct MemStatsAllocator
     {
-        mark.nmPage = nraPageLast;
-        mark.nmNext = nraFreeNext;
-        mark.nmLast = nraFreeLast;
-    }
+        ArenaAllocator* m_arena;
+        CompMemKind     m_kind;
+
+        void* allocateMemory(size_t sz)
+        {
+            m_arena->m_stats.AddAlloc(sz, m_kind);
+            return m_arena->allocateMemory(sz);
+        }
+    };
 
 private:
+    static CritSecObject     s_statsLock; // This lock protects the data structures below.
+    static MemStats          s_maxStats;  // Stats for the allocator with the largest amount allocated.
+    static AggregateMemStats s_aggStats;  // Aggregates statistics for all allocators.
 
-    void            nraToss(nraMarkDsc &mark);
-
-    LPVOID          nraVirtualAlloc(LPVOID lpAddress, SIZE_T dwSize, DWORD flAllocationType, DWORD flProtect)
-    {
-#if defined(DEBUG)
-        assert(lpAddress == 0 && flAllocationType == MEM_COMMIT && flProtect == PAGE_READWRITE);
-        if (nraDirectAlloc())
-        {
-#undef GetProcessHeap
-#undef HeapAlloc
-            return ::HeapAlloc(GetProcessHeap(), 0, dwSize);
-        }
-        else
-            return DbgNew(dwSize);
-#else
-        return nraMemoryManager->ClrVirtualAlloc(lpAddress, dwSize, flAllocationType, flProtect);
-#endif
-    }
-
-    void            nraVirtualFree(LPVOID lpAddress, SIZE_T dwSize, DWORD dwFreeType)
-    {
-#if defined(DEBUG)
-        assert(dwSize == 0 && dwFreeType == MEM_RELEASE);
-        if (nraDirectAlloc())
-        {
-#undef GetProcessHeap
-#undef HeapFree
-            ::HeapFree(GetProcessHeap(), 0, lpAddress);
-        }
-        else
-            DbgDelete(lpAddress);
-#else
-        nraMemoryManager->ClrVirtualFree(lpAddress, dwSize, dwFreeType);
-#endif
-    }
+    MemStats          m_stats;
+    MemStatsAllocator m_statsAllocators[CMK_Count];
 
 public:
+    MemStatsAllocator* getMemStatsAllocator(CompMemKind kind);
+    void finishMemStats();
+    void dumpMemStats(FILE* file);
 
-    void            nraRlsm(nraMarkDsc &mark)
+    static void dumpMaxMemStats(FILE* file);
+    static void dumpAggregateMemStats(FILE* file);
+#endif // MEASURE_MEM_ALLOC
+
+public:
+    ArenaAllocator();
+
+    // NOTE: it would be nice to have a destructor on this type to ensure that any value that
+    //       goes out of scope is either uninitialized or has been torn down via a call to
+    //       destroy(), but this interacts badly in methods that use SEH. #3058 tracks
+    //       revisiting EH in the JIT; such a destructor could be added if SEH is removed
+    //       as part of that work.
+
+    void destroy();
+
+    inline void* allocateMemory(size_t sz);
+
+    size_t getTotalBytesAllocated();
+    size_t getTotalBytesUsed();
+
+    static bool   bypassHostAllocator();
+    static size_t getDefaultPageSize();
+};
+
+//------------------------------------------------------------------------
+// ArenaAllocator::allocateMemory:
+//    Allocates memory using an `ArenaAllocator`.
+//
+// Arguments:
+//    size - The number of bytes to allocate.
+//
+// Return Value:
+//    A pointer to the allocated memory.
+//
+// Note:
+//    The DEBUG version of the method has some abilities that the release
+//    version does not: it may inject faults into the allocator and
+//    seeds all allocations with a specified pattern to help catch
+//    use-before-init problems.
+//
+inline void* ArenaAllocator::allocateMemory(size_t size)
+{
+    assert(size != 0);
+
+    // Ensure that we always allocate in pointer sized increments.
+    size = roundUp(size, sizeof(size_t));
+
+#if defined(DEBUG)
+    if (JitConfig.ShouldInjectFault() != 0)
     {
-        if (nraPageLast != mark.nmPage)
+        // Force the underlying memory allocator (either the OS or the CLR hoster)
+        // to allocate the memory. Any fault injection will kick in.
+        void* p = ClrAllocInProcessHeap(0, S_SIZE_T(1));
+        if (p != nullptr)
         {
-            nraToss(mark);
+            ClrFreeInProcessHeap(0, p);
         }
         else
         {
-            nraFreeNext = mark.nmNext;
-            nraFreeLast = mark.nmLast;
+            NOMEM(); // Throw!
+        }
+    }
+#endif
+
+    void* block = m_nextFreeByte;
+    m_nextFreeByte += size;
+
+    if (m_nextFreeByte > m_lastFreeByte)
+    {
+        block = allocateNewPage(size);
+    }
+
+#if defined(DEBUG)
+    memset(block, UninitializedWord<char>(nullptr), size);
+#endif
+
+    return block;
+}
+
+// Allows general purpose code (e.g. collection classes) to allocate
+// memory of a pre-determined kind via an arena allocator.
+
+class CompAllocator
+{
+#if MEASURE_MEM_ALLOC
+    ArenaAllocator::MemStatsAllocator* m_arena;
+#else
+    ArenaAllocator* m_arena;
+#endif
+
+public:
+    CompAllocator(ArenaAllocator* arena, CompMemKind cmk)
+#if MEASURE_MEM_ALLOC
+        : m_arena(arena->getMemStatsAllocator(cmk))
+#else
+        : m_arena(arena)
+#endif
+    {
+    }
+
+    // Allocate a block of memory suitable to store `count` objects of type `T`.
+    // Zero-length allocations are not allowed.
+    template <typename T>
+    T* allocate(size_t count)
+    {
+        // Ensure that count * sizeof(T) does not overflow.
+        if (count > (SIZE_MAX / sizeof(T)))
+        {
+            NOMEM();
+        }
+
+        void* p = m_arena->allocateMemory(count * sizeof(T));
+
+        // Ensure that the allocator returned sizeof(size_t) aligned memory.
+        assert((size_t(p) & (sizeof(size_t) - 1)) == 0);
+
+        return static_cast<T*>(p);
+    }
+
+    // Deallocate a block of memory previously allocated by `allocate`.
+    // The arena allocator does not release memory so this doesn't do anything.
+    void deallocate(void* p)
+    {
+    }
+};
+
+// Global operator new overloads that work with CompAllocator
+
+inline void* __cdecl operator new(size_t n, CompAllocator alloc)
+{
+    return alloc.allocate<char>(n);
+}
+
+inline void* __cdecl operator new[](size_t n, CompAllocator alloc)
+{
+    return alloc.allocate<char>(n);
+}
+
+// A CompAllocator wrapper that implements IAllocator and allows zero-length
+// memory allocations (the arena allocator does not support zero-length
+// allocation).
+
+class CompIAllocator : public IAllocator
+{
+    CompAllocator m_alloc;
+    char          m_zeroLenAllocTarg;
+
+public:
+    CompIAllocator(CompAllocator alloc) : m_alloc(alloc)
+    {
+    }
+
+    // Allocates a block of memory at least `sz` in size.
+    virtual void* Alloc(size_t sz) override
+    {
+        if (sz == 0)
+        {
+            return &m_zeroLenAllocTarg;
+        }
+        else
+        {
+            return m_alloc.allocate<char>(sz);
         }
     }
 
-    size_t          nraTotalSizeAlloc();
-    size_t          nraTotalSizeUsed ();
-
-    /* The following used to visit all of the allocated pages */
-
-    void    *       nraPageWalkerStart();
-    void    *       nraPageWalkerNext (void *page);
-
-    void    *       nraPageGetData(void *page);
-    size_t          nraPageGetSize(void *page);
-
-    IEEMemoryManager * nraGetMemoryManager()
+    // Allocates a block of memory at least `elems * elemSize` in size.
+    virtual void* ArrayAlloc(size_t elems, size_t elemSize) override
     {
-        return nraMemoryManager;
+        if ((elems == 0) || (elemSize == 0))
+        {
+            return &m_zeroLenAllocTarg;
+        }
+        else
+        {
+            // Ensure that elems * elemSize does not overflow.
+            if (elems > (SIZE_MAX / elemSize))
+            {
+                NOMEM();
+            }
+
+            return m_alloc.allocate<char>(elems * elemSize);
+        }
     }
 
-    static bool     nraDirectAlloc();
-
-#ifdef _TARGET_AMD64_
-    /*
-     * IGcInfoEncoderAllocator implementation (protected)
-     *   - required to use GcInfoEncoder
-     */
-protected:
-    void* Alloc(size_t size)
+    // Frees the block of memory pointed to by p.
+    virtual void Free(void* p) override
     {
-        //GcInfoEncoder likes to allocate things of 0-size when m_NumSlots == 0
-        //but nraAlloc doesn't like to allocate 0-size things.. so lets not let it
-        return size ? nraAlloc(size) : NULL;
+        m_alloc.deallocate(p);
     }
-    void Free( void* ) {}
-#endif // _TARGET_AMD64_
 };
 
-#if !defined(DEBUG)
-
-inline
-void    *           norls_allocator::nraAlloc(size_t sz)
-{
-    void    *   block;
-
-    block = nraFreeNext;
-            nraFreeNext += sz;
-
-    if  (nraFreeNext > nraFreeLast)
-        block = nraAllocNewPage(sz);
-
-    return  block;
-}
-
-#endif
-
-/*****************************************************************************/
-/*****************************************************************************
- * If most uses of the norls_alloctor are going to be non-simultaneous,
- * we keep a single instance handy and preallocate 1 chunk of 64K
- * Then most uses won't need to call VirtualAlloc() for the first page.
- */
-
-
-#if defined(DEBUG)
-
-inline bool norls_allocator::nraDirectAlloc()
-{
-    // When JitDirectAlloc is set, all JIT allocations requests are forwarded
-    // directly to the OS. This allows taking advantage of pageheap and other gflag
-    // knobs for ensuring that we do not have buffer overruns in the JIT.
-
-    static ConfigDWORD fJitDirectAlloc;
-    return (fJitDirectAlloc.val(CLRConfig::INTERNAL_JitDirectAlloc) != 0);
-}
-
-#else  // RELEASE
-
-inline bool norls_allocator::nraDirectAlloc()
-{
-    return false;
-}
-#endif
-
-extern size_t THE_ALLOCATOR_BASE_SIZE;
-
-void                nraInitTheAllocator();  // One-time initialization
-void                nraTheAllocatorDone();  // One-time completion code
-
-// returns NULL if the single instance is already in use. 
-// User will need to allocate a new instance of the norls_allocator
-
-norls_allocator *   nraGetTheAllocator(IEEMemoryManager* pMemoryManager);
-
-// Should be called after we are done with the current use, so that the
-// next user can reuse it, instead of allocating a new instance
-
-void                nraFreeTheAllocator();
-
-
-/*****************************************************************************/
-#endif  //  _ALLOC_H_
-/*****************************************************************************/
+#endif // _ALLOC_H_

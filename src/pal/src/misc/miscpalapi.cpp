@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*++
 
@@ -24,22 +23,125 @@ Revision History:
 #include "pal/palinternal.h"
 #include "pal/dbgmsg.h"
 #include "pal/file.h"
+#include "pal/process.h"
 #include "pal/module.h"
+#include "pal/malloc.hpp"
+#include "pal/stackstring.hpp"
 
 #include <errno.h>
 #include <unistd.h> 
 #include <time.h>
+#include <pthread.h>
+#include <dlfcn.h>
+
+#include <pal_endian.h>
 
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
 #endif // __APPLE__
 
-extern char g_szCoreCLRPath[MAX_PATH];
-
 SET_DEFAULT_DEBUG_CHANNEL(MISC);
 
-static const char RANDOM_DEVICE_NAME[] ="/dev/random";
 static const char URANDOM_DEVICE_NAME[]="/dev/urandom";
+
+/*++
+
+Function :
+
+    PAL_GetPALDirectoryW
+    
+    Returns the fully qualified path name
+    where the PALL DLL was loaded from.
+    
+    On failure it returns FALSE and sets the 
+    proper LastError code.
+
+--*/
+BOOL 
+PAL_GetPALDirectoryW(PathWCharString& lpDirectoryName) 
+{
+    LPCWSTR lpFullPathAndName = NULL;
+    LPCWSTR lpEndPoint = NULL;
+    BOOL bRet = FALSE;
+
+    PERF_ENTRY(PAL_GetPALDirectoryW);
+
+    MODSTRUCT *module = LOADGetPalLibrary();
+    if (!module)
+    {
+        SetLastError(ERROR_INTERNAL_ERROR);
+        goto EXIT;
+    }
+    lpFullPathAndName = module->lib_name;
+    if (lpFullPathAndName == NULL)
+    {
+        SetLastError(ERROR_INTERNAL_ERROR);
+        goto EXIT;
+    }
+    lpEndPoint = PAL_wcsrchr( lpFullPathAndName, '/' );
+    if ( lpEndPoint )
+    {
+        /* The path that we return is required to have
+           the trailing slash on the end.*/
+        lpEndPoint++;
+    
+        
+        if(!lpDirectoryName.Set(lpFullPathAndName,lpEndPoint - lpFullPathAndName))
+        {
+            ASSERT( "The buffer was not large enough.\n" );
+            SetLastError( ERROR_INSUFFICIENT_BUFFER );
+            goto EXIT;
+        }
+
+        bRet = TRUE;
+    }
+    else
+    {
+        ASSERT( "Unable to determine the path.\n" );
+        /* Error path, should not be executed. */
+        SetLastError( ERROR_INTERNAL_ERROR );
+    }
+    
+EXIT:    
+    PERF_EXIT(PAL_GetPALDirectoryW);
+    return bRet;
+}
+
+BOOL
+PAL_GetPALDirectoryA(PathCharString& lpDirectoryName)
+{
+    BOOL bRet;
+    PathWCharString directory;
+
+    PERF_ENTRY(PAL_GetPALDirectoryA);
+
+    bRet = PAL_GetPALDirectoryW(directory);
+
+    if (bRet) 
+    {
+        
+        int length = WideCharToMultiByte(CP_ACP, 0, directory.GetString(), -1, NULL, 0, NULL, 0);
+        LPSTR DirectoryName = lpDirectoryName.OpenStringBuffer(length);
+        if (NULL == DirectoryName)
+        {
+            SetLastError( ERROR_INSUFFICIENT_BUFFER );
+            bRet = FALSE;
+        }
+        
+        length = WideCharToMultiByte(CP_ACP, 0, directory.GetString(), -1, DirectoryName, length, NULL, 0);
+
+        if (0 == length)
+        {
+            bRet = FALSE;
+            length++;
+        }
+    
+        lpDirectoryName.CloseBuffer(length - 1);
+    }
+
+    PERF_EXIT(PAL_GetPALDirectoryA);
+    return bRet;
+}
 
 /*++
 
@@ -56,122 +158,37 @@ Function :
 See rotor_pal.doc for more details.
 
 --*/
+PALIMPORT
 BOOL 
 PALAPI
-PAL_GetPALDirectoryW( OUT LPWSTR lpDirectoryName, IN UINT cchDirectoryName ) 
+PAL_GetPALDirectoryW( OUT LPWSTR lpDirectoryName, IN OUT UINT* cchDirectoryName ) 
 {
-#if !defined(CORECLR) || !defined(__APPLE__)
-    LPWSTR lpFullPathAndName = NULL;
-    LPWSTR lpEndPoint = NULL;
-    BOOL bRet = FALSE;
-
+    PathWCharString directory;
+    BOOL bRet;
     PERF_ENTRY(PAL_GetPALDirectoryW);
-    ENTRY( "PAL_GetPALDirectoryW( %p, %d )\n", lpDirectoryName, cchDirectoryName );
+    ENTRY( "PAL_GetPALDirectoryW( %p, %d )\n", lpDirectoryName, *cchDirectoryName );
 
-    lpFullPathAndName = pal_module.lib_name;
-    lpEndPoint = PAL_wcsrchr( lpFullPathAndName, '/' );
-    if ( lpEndPoint )
-    {
-        /* The path that we return is required to have
-           the trailing slash on the end.*/
-        lpEndPoint++;
-    }
-    if ( lpFullPathAndName && lpEndPoint && *lpEndPoint != '\0' )
-    {
-        while ( cchDirectoryName - 1 && lpFullPathAndName != lpEndPoint )
+    bRet = PAL_GetPALDirectoryW(directory);
+
+    if (bRet) {
+        
+        if (directory.GetCount() > *cchDirectoryName)
         {
-            *lpDirectoryName = *lpFullPathAndName;
-            lpFullPathAndName++;
-            lpDirectoryName++;
-            cchDirectoryName--;
-        }
-            
-        if ( lpFullPathAndName == lpEndPoint )
-        {
-            *lpDirectoryName = '\0';
-            bRet = TRUE;
-            goto EXIT;
+            SetLastError( ERROR_INSUFFICIENT_BUFFER );
+            bRet = FALSE;
         }
         else
-        {
-            ASSERT( "The buffer was not large enough.\n" );
-            SetLastError( ERROR_INSUFFICIENT_BUFFER );
-            goto EXIT;
+        { 
+            PAL_wcscpy(lpDirectoryName, directory.GetString());
         }
+
+        *cchDirectoryName = directory.GetCount();
     }
-    else
-    {
-        ASSERT( "Unable to determine the path.\n" );
-    }
-    
-    /* Error path, should not be executed. */
-    SetLastError( ERROR_INTERNAL_ERROR );
-EXIT:    
+
     LOGEXIT( "PAL_GetPALDirectoryW returns BOOL %d.\n", bRet);
     PERF_EXIT(PAL_GetPALDirectoryW);
     return bRet;
-#else // !CORECLR || !__APPLE__
-    BOOL bRet = FALSE;
-    char szDirectory[MAX_PATH + 1];
 
-    PERF_ENTRY(PAL_GetPALDirectoryW);
-    ENTRY( "PAL_GetPALDirectoryW( %p, %d )\n", lpDirectoryName, cchDirectoryName );
-
-    // Under CoreCLR/Mac PAL is not a separate dynamic library, but is statically linked instead. Under normal
-    // circumstances the PAL will be linked into a single binary containing all the CoreCLR code, but there
-    // are still cases where build tools depend upon and statically link the PAL themselves. We can tell the
-    // difference because CoreCLR initialization sets the value of the g_szCoreCLRPath to the very information
-    // we want to return here. If this has not been set we'll assume this is a standalone PAL and derive the
-    // installation directory from the main executable directory.
-    if (g_szCoreCLRPath[0] != '\0')
-    {
-        if (strlen(g_szCoreCLRPath) >= sizeof(szDirectory))
-        {
-            ASSERT("Internal buffer not large enough");
-            SetLastError(ERROR_INSUFFICIENT_BUFFER);
-            goto EXIT;
-        }
-        strcpy_s(szDirectory, sizeof(szDirectory), g_szCoreCLRPath);
-    }
-    else
-    {
-        // We must be a standalone PAL linked into some application (e.g. the build tools such as build.exe or
-        // fxprun). So our installation directory is simply the directory the executable resides in.
-        uint32_t bufsize = sizeof(szDirectory);
-        if (_NSGetExecutablePath(szDirectory, &bufsize))
-        {
-            ASSERT("_NSGetExecutablePath failure\n");
-            SetLastError(ERROR_INTERNAL_ERROR);
-            goto EXIT;
-        }
-
-        // Strip off executable name (but leave trailing '/').
-        char *pszLastSlash = rindex(szDirectory, '/');
-        if (pszLastSlash == NULL)
-        {
-            ASSERT("_NSGetExecutablePath returned filename without path\n");
-            SetLastError(ERROR_INTERNAL_ERROR);
-            goto EXIT;
-        }
-        pszLastSlash[1] = '\0';
-    }
-
-    // Once we get here we have the directory in 8-bit format in szDirectory, just need to convert
-    // it to wide characters now.
-    if (MultiByteToWideChar(CP_UTF8, 0, szDirectory, -1, lpDirectoryName, cchDirectoryName) == 0)
-    {
-        ASSERT("PAL_GetPALDirectoryW: MultiByteToWideChar failed\n");
-        SetLastError(ERROR_INTERNAL_ERROR);
-        goto EXIT;
-    }
-
-    bRet = TRUE;
-
-EXIT:    
-    LOGEXIT( "PAL_GetPALDirectoryW returns BOOL %d.\n", bRet);
-    PERF_EXIT(PAL_GetPALDirectoryW);
-    return bRet;
-#endif // !CORECLR || !__APPLE__
 }
 
 PALIMPORT
@@ -179,158 +196,96 @@ BOOL
 PALAPI
 PAL_GetPALDirectoryA(
              OUT LPSTR lpDirectoryName,
-             IN UINT cchDirectoryName)
+             IN UINT*  cchDirectoryName)
 {
     BOOL bRet;
-    WCHAR PALDirW[_MAX_PATH];
+    PathCharString directory;
 
     PERF_ENTRY(PAL_GetPALDirectoryA);
-    ENTRY( "PAL_GetPALDirectoryA( %p, %d )\n", lpDirectoryName, cchDirectoryName );
+    ENTRY( "PAL_GetPALDirectoryA( %p, %d )\n", lpDirectoryName, *cchDirectoryName );
 
-    bRet = PAL_GetPALDirectoryW(PALDirW, _MAX_PATH);
-    if (bRet) {
-        if (WideCharToMultiByte(CP_ACP, 0, 
-            PALDirW, -1, lpDirectoryName, cchDirectoryName, NULL, 0)) {
-            bRet = TRUE;
-        } else {
+    bRet = PAL_GetPALDirectoryA(directory);
+
+    if (bRet) 
+    {
+        if (directory.GetCount() > *cchDirectoryName)
+        {
+            SetLastError( ERROR_INSUFFICIENT_BUFFER );
+            bRet = FALSE;
+            *cchDirectoryName = directory.GetCount();
+        }
+        else if (strcpy_s(lpDirectoryName, directory.GetCount(), directory.GetString()) == SAFECRT_SUCCESS) 
+        {
+        }
+        else 
+        {
             bRet = FALSE;
         }
     }
 
-    LOGEXIT( "PAL_GetPALDirectoryW returns BOOL %d.\n", bRet);
+    LOGEXIT( "PAL_GetPALDirectoryA returns BOOL %d.\n", bRet);
     PERF_EXIT(PAL_GetPALDirectoryA);
     return bRet;
 }
 
-// Define _BitScanForward64 and BitScanForward
-// Per MSDN, BitScanForward64 will search the mask data from LSB to MSB for a set bit.
-// If one is found, its bit position is returned in the outPDWORD argument and 1 is returned.
-// Otherwise, 0 is returned.
-//
-// On GCC, the equivalent function is __builtin_ffsl. It returns 1+index of the least
-// significant set bit, or 0 if if mask is zero.
-unsigned char
-PALAPI
-BitScanForward64(
-        IN OUT PDWORD Index,
-        IN UINT64 qwMask)
-{
-    unsigned char bRet = FALSE;
-    int iIndex = __builtin_ffsl(qwMask);
-    if (iIndex != 0)
-    {
-        // Set the Index after deducting unity
-        *Index = (DWORD)(iIndex-1);
-        bRet = TRUE;
-    }
-
-    return bRet;
-}
-
-// On GCC, the equivalent function is __builtin_ffs. It returns 1+index of the least
-// significant set bit, or 0 if if mask is zero.
-unsigned char
-PALAPI
-BitScanForward(
-        IN OUT PDWORD Index,
-        IN UINT wMask)
-{
-    unsigned char bRet = FALSE;
-    int iIndex = __builtin_ffs(wMask);
-    if (iIndex != 0)
-    {
-        // Set the Index after deducting unity
-        *Index = (DWORD)(iIndex-1);
-        bRet = TRUE;
-    }
-    
-    return bRet;
-}
-
-BOOL
+VOID
 PALAPI
 PAL_Random(
-        IN BOOL bStrong,
         IN OUT LPVOID lpBuffer,
         IN DWORD dwLength)
 {
     int rand_des = -1;
-    BOOL bRet = FALSE;
     DWORD i;
-    char buf;
     long num = 0;
-    static BOOL sMissingDevRandom;
     static BOOL sMissingDevURandom;
     static BOOL sInitializedMRand;
 
     PERF_ENTRY(PAL_Random);
-    ENTRY("PAL_Random(bStrong=%d, lpBuffer=%p, dwLength=%d)\n", 
-          bStrong, lpBuffer, dwLength);
+    ENTRY("PAL_Random(lpBuffer=%p, dwLength=%d)\n", lpBuffer, dwLength);
 
-    i = 0;
-
-    if (bStrong == TRUE && i < dwLength && !sMissingDevRandom)
+    if (!sMissingDevURandom)
     {
-        // request non-blocking access to avoid hangs if the /dev/random is exhausted
-        // or just simply broken
-        if ((rand_des = PAL__open(RANDOM_DEVICE_NAME, O_RDONLY | O_NONBLOCK)) == -1)
+        do
+        {
+            rand_des = open("/dev/urandom", O_RDONLY, O_CLOEXEC);
+        }
+        while ((rand_des == -1) && (errno == EINTR));
+
+        if (rand_des == -1)
         {
             if (errno == ENOENT)
-            {
-                sMissingDevRandom = TRUE;
+            {                
+                sMissingDevURandom = TRUE;
             }
             else
             {
                 ASSERT("PAL__open() failed, errno:%d (%s)\n", errno, strerror(errno));
             }
 
-            // Back off and try /dev/urandom.
+            // Back off and try mrand48.
         }
         else
         {
-            for( ; i < dwLength; i++)
+            DWORD offset = 0;
+            do
             {
-                if (read(rand_des, &buf, 1) < 1)
+                DWORD n = read(rand_des, (BYTE*)lpBuffer + offset , dwLength - offset);
+                if (n == -1)
                 {
-                    // the /dev/random pool has been exhausted.  Fall back
-                    // to /dev/urandom for the remainder of the buffer.
+                    if (errno == EINTR)
+                    {
+                        continue;
+                    }
+                    ASSERT("read() failed, errno:%d (%s)\n", errno, strerror(errno));
+
                     break;
                 }
 
-                *(((BYTE*)lpBuffer) + i) ^= buf;
+                offset += n;
             }
+            while (offset != dwLength);
 
-            close(rand_des);
-        }
-    }
- 
-    if (i < dwLength && !sMissingDevURandom)
-    {
-        if ((rand_des = PAL__open(URANDOM_DEVICE_NAME, O_RDONLY)) == -1)
-        {
-            if (errno == ENOENT)
-            {                
-                sMissingDevURandom = TRUE;                
-            }
-            else
-            {
-                ASSERT("PAL__open() failed, errno:%d (%s)\n", errno, strerror(errno));               
-            }
-
-            // Back off and try mrand48.           
-        }
-        else
-        {
-            for( ; i < dwLength; i++)
-            {
-                if (read(rand_des, &buf, 1) < 1)
-                {
-                    // Fall back to srand48 for the remainder of the buffer.
-                    break;
-                }
-
-                *(((BYTE*)lpBuffer) + i) ^= buf;
-            }
+            _ASSERTE(offset == dwLength);
 
             close(rand_des);
         }
@@ -343,9 +298,9 @@ PAL_Random(
     }
 
     // always xor srand48 over the whole buffer to get some randomness
-    // in case /dev/random is not really random
+    // in case /dev/urandom is not really random
 
-    for(i = 0; i < dwLength; i++)
+    for (i = 0; i < dwLength; i++)
     {
         if (i % sizeof(long) == 0) {
             num = mrand48();
@@ -355,9 +310,6 @@ PAL_Random(
         num >>= 8;
     }
 
-    bRet = TRUE;
-
-    LOGEXIT("PAL_Random returns %d\n", bRet);
+    LOGEXIT("PAL_Random\n");
     PERF_EXIT(PAL_Random);
-    return bRet;
 }

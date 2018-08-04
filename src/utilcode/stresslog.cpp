@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*************************************************************************************/
 /*                                   StressLog.cpp                                   */
@@ -52,7 +51,7 @@ unsigned __int64 getTimeStamp() {
 
 #endif // _TARGET_X86_ 
 
-#if defined(_TARGET_X86_)
+#if defined(_TARGET_X86_) && !defined(FEATURE_PAL)
 
 /*********************************************************************************/
 /* Get the the frequency cooresponding to 'getTimeStamp'.  For x86, this is the
@@ -185,7 +184,7 @@ void StressLog::Initialize(unsigned facilities,  unsigned level, unsigned maxByt
 #endif // _DEBUG
 
 #else // !FEATURE_PAL
-    theLog.moduleOffset = (SIZE_T)PAL_GetCoreClrModuleBase();
+    theLog.moduleOffset = (SIZE_T)PAL_GetSymbolModuleBase((void *)StressLog::Initialize);
 #endif // !FEATURE_PAL
 
 #if !defined (STRESS_LOG_READONLY)    
@@ -315,6 +314,7 @@ ThreadStressLog* StressLog::CreateThreadStressLog() {
         // we fail.
         ClrFlsSetValue(theLog.TLSslot, NULL);
     }
+#pragma warning(suppress: 4101)
     PAL_CPP_CATCH_DERIVED(OutOfMemoryException, obj)
     {
         // Just leave on any exception. Note: can't goto or return from within EX_CATCH...
@@ -530,7 +530,7 @@ void TrackSO(BOOL tolerance)
 
 /*********************************************************************************/
 /* fetch a buffer that can be used to write a stress message, it is thread safe */
-void ThreadStressLog::LogMsg ( DWORD_PTR facility, int cArgs, const char* format, va_list Args)
+void ThreadStressLog::LogMsg(unsigned facility, int cArgs, const char* format, va_list Args)
 {
     STATIC_CONTRACT_NOTHROW;
     STATIC_CONTRACT_FORBID_FAULT;
@@ -609,12 +609,7 @@ FORCEINLINE BOOL StressLog::InlinedETWLogOn(unsigned facility, unsigned level)
     STATIC_CONTRACT_LEAF;
     STATIC_CONTRACT_SUPPORTS_DAC;
 
-#if defined(FEATURE_EVENT_TRACE) && !defined(FEATURE_CORECLR) && !defined(DACCESS_COMPILE)
-    return ((Microsoft_Windows_DotNETRuntimeStressHandle != 0) && 
-        (ETW_CATEGORY_ENABLED(MICROSOFT_WINDOWS_DOTNETRUNTIME_STRESS_PROVIDER_Context, (UCHAR)level, facility) != 0));
-#else
     return FALSE;
-#endif
 }
 
 BOOL StressLog::ETWLogOn(unsigned facility, unsigned level)
@@ -655,7 +650,6 @@ void StressLog::LogMsg (unsigned level, unsigned facility, int cArgs, const char
     _ASSERTE ( cArgs >= 0 && cArgs <= 7 );
 
     va_list Args;
-    va_start(Args, format);        
     
     if(InlinedStressLogOn(facility, level))
     {
@@ -667,31 +661,12 @@ void StressLog::LogMsg (unsigned level, unsigned facility, int cArgs, const char
             if (msgs == 0)
                 return;
         }
+        va_start(Args, format);
         msgs->LogMsg (facility, cArgs, format, Args);
+        va_end(Args);
     }
 
 // Stress Log ETW feature available only on the desktop versions of the runtime
-#if !defined(FEATURE_CORECLR)
-    if(InlinedETWLogOn(facility, level))
-    {
-#define MAX_STRESSLOG_DATA_ETW_LENGTH 256
-        CHAR logMessage[MAX_STRESSLOG_DATA_ETW_LENGTH];
-
-        ULONG messageLength = (USHORT)_vsnprintf_s(logMessage, COUNTOF(logMessage), MAX_STRESSLOG_DATA_ETW_LENGTH-1, format, Args);
-        
-        if(messageLength >= 0 && 
-           messageLength < MAX_STRESSLOG_DATA_ETW_LENGTH) // this condition has been added to make prefast happy
-        {
-            logMessage[messageLength] = 0;
-        }
-        messageLength++;
-        logMessage[MAX_STRESSLOG_DATA_ETW_LENGTH-1] = 0;
-        FireEtwStressLogEvent_V1((UINT32)facility, (UCHAR)level, logMessage, GetClrInstanceId());
-#undef MAX_STRESSLOG_DATA_ETW_LENGTH
-    }
-#endif // !FEATURE_CORECLR
-
-    va_end(Args);
 #endif //!DACCESS_COMPILE
 }
 

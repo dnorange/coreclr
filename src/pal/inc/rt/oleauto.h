@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //
 
 //
@@ -85,14 +84,6 @@ typedef struct {
 #define VARCMP_GT   2
 #define VARCMP_NULL 3
 
-#ifdef ENABLE_DOWNLEVEL_FOR_NLS
-STDAPI VarParseNumFromStr(OLECHAR * strIn, LCID lcid, ULONG dwFlags,
-            NUMPARSE * pnumprs, BYTE * rgbDig);
-
-STDAPI VarNumFromParseNum(NUMPARSE * pnumprs, BYTE * rgbDig,
-            ULONG dwVtBits, VARIANT * pvar);
-#endif
-
 STDAPI VariantChangeType(VARIANTARG * pvargDest,
                 VARIANTARG * pvarSrc, USHORT wFlags, VARTYPE vt);
 
@@ -108,21 +99,6 @@ STDAPI VarCyFix(CY cyIn, LPCY pcyResult);
 
 STDAPI VarR8FromCy(CY cyIn, DOUBLE * pdblOut);
 STDAPI VarR4FromCy(CY cyIn, FLOAT * pfltOut);
-
-#ifdef ENABLE_DOWNLEVEL_FOR_NLS
-STDAPI VarBstrFromCy(CY cyIn, LCID lcid, ULONG dwFlags, BSTR * pbstrOut);
-STDAPI VarBstrFromUI1(BYTE bVal, LCID lcid, ULONG dwFlags, BSTR * pbstrOut);
-STDAPI VarBstrFromI2(SHORT iVal, LCID lcid, ULONG dwFlags, BSTR * pbstrOut);
-STDAPI VarBstrFromI4(LONG lIn, LCID lcid, ULONG dwFlags, BSTR * pbstrOut);
-STDAPI VarBstrFromI8(LONG64 i64In, LCID lcid, ULONG dwFlags, BSTR FAR* pbstrOut);
-STDAPI VarBstrFromR4(FLOAT fltIn, LCID lcid, ULONG dwFlags, BSTR * pbstrOut);
-STDAPI VarBstrFromR8(DOUBLE dblIn, LCID lcid, ULONG dwFlags, BSTR * pbstrOut);
-STDAPI VarBstrFromI1(CHAR cIn, LCID lcid, ULONG dwFlags, BSTR *pbstrOut);
-STDAPI VarBstrFromUI2(USHORT uiIn, LCID lcid, ULONG dwFlags, BSTR *pbstrOut);
-STDAPI VarBstrFromUI4(ULONG ulIn, LCID lcid, ULONG dwFlags, BSTR *pbstrOut);
-STDAPI VarBstrFromUI8(ULONG64 ui64In, LCID lcid, ULONG dwFlags, BSTR FAR* pbstrOut);
-STDAPI VarBstrFromDec(DECIMAL *pdecIn, LCID lcid, ULONG dwFlags, BSTR *pbstrOut);
-#endif
 
 STDAPI VarDecFromR4(FLOAT fltIn, DECIMAL *pdecOut);
 STDAPI VarDecFromR8(DOUBLE dblIn, DECIMAL *pdecOut);
@@ -147,10 +123,6 @@ STDAPI VarI4FromDec(DECIMAL *pdecIn, LONG *pI4In);
 STDAPI VarUI4FromDec(DECIMAL *pdecIn, ULONG *pUI4In);
 STDAPI VarR8FromDec(DECIMAL *pdecIn, DOUBLE *pdblOut);
 STDAPI VarR4FromDec(DECIMAL *pdecIn, FLOAT *pfltOut);
-
-#ifdef ENABLE_DOWNLEVEL_FOR_NLS
-STDAPI VarR8FromStr(OLECHAR *strin, LCID lcid, ULONG dwFlags, DOUBLE *pdblOut);
-#endif
 
 STDAPI VarI1FromR8(DOUBLE dblIn, CHAR *pcOut);
 STDAPI VarI2FromR8(DOUBLE dblIn, SHORT * psOut);

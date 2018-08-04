@@ -2,4 +2,6 @@
 include(${CLR_DIR}/dac.cmake)
 include(../../md_dac.cmake)
 
-add_library(mdruntime_dac ${MDRUNTIME_SOURCES})
+add_precompiled_header(stdafx.h ../stdafx.cpp MDRUNTIME_SOURCES)
+
+add_library_clr(mdruntime_dac ${MDRUNTIME_SOURCES})

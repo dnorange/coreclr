@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //*****************************************************************************
 // File: arm_primitives.h
 // 
@@ -72,8 +71,12 @@ inline void CORDbgAdjustPCForBreakInstruction(DT_CONTEXT* pContext)
 {
     LIMITED_METHOD_CONTRACT;
 
+#if defined(DBG_TARGET_ARM64)
+    pContext->Pc -= CORDbg_BREAK_INSTRUCTION_SIZE;
+#else
     // @ARMTODO: ARM appears to leave the PC at the start of the breakpoint (at least according to Windbg,
     // which may be adjusting the view).
+#endif
     return;
 }
 

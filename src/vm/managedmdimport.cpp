@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 // TODO: Re-implement with MC++ if we ever compile any mscorlib code with that
 
@@ -69,7 +68,7 @@ FCIMPL11(void, MetaDataImport::GetMarshalAs,
         *safeArrayUserDefinedSubType = info.m_strSafeArrayUserDefTypeName == NULL ? NULL :
             StringObject::NewString(info.m_strSafeArrayUserDefTypeName, info.m_cSafeArrayUserDefTypeNameBytes);
 #else
-        *iidParamIndex = -1;
+        *iidParamIndex = 0;
 
         *safeArraySubType = VT_EMPTY;
 

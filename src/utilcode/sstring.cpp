@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 // ---------------------------------------------------------------------------
 // SString.cpp
 // 
@@ -12,7 +11,6 @@
 #include "sstring.h"
 #include "ex.h"
 #include "holder.h"
-#include "newapis.h"
 
 
 #if defined(_MSC_VER)
@@ -92,7 +90,7 @@ static WCHAR MapChar(WCHAR wc, DWORD dwFlags, LocaleID lcid)
 #else
     // TODO: Uncertain if this is the best behavior.  Caller should specify locale name
     if (lcid == NULL || lcid[0]==W('!')) lcid = W("");
-    int iRet = NewApis::LCMapStringEx(lcid, dwFlags, &wc, 1, &wTmp, 1, NULL, NULL, 0);
+    int iRet = ::LCMapStringEx(lcid, dwFlags, &wc, 1, &wTmp, 1, NULL, NULL, 0);
 #endif
     if (!iRet) {
         // This can fail in non-exceptional cases becauseof unknown unicode characters. 
@@ -2034,6 +2032,11 @@ static void CheckForFormatStringGlobalizationIssues(const SString &format, const
 #define ERANGE 34
 #endif
 
+#if defined(_MSC_VER)
+#undef va_copy
+#define va_copy(dest,src) (dest = src)
+#endif
+
 void SString::VPrintf(const CHAR *format, va_list args)
 {
     CONTRACT_VOID
@@ -2045,13 +2048,16 @@ void SString::VPrintf(const CHAR *format, va_list args)
     }
     CONTRACT_END;
 
+    va_list ap;
     // sprintf gives us no means to know how many characters are written
     // other than guessing and trying
 
     if (GetRawCount() > 0)
     {
         // First, try to use the existing buffer
-        int result = _vsnprintf_s(GetRawANSI(), GetRawCount()+1, _TRUNCATE, format, args);
+        va_copy(ap, args);
+        int result = _vsnprintf_s(GetRawANSI(), GetRawCount()+1, _TRUNCATE, format, ap);
+        va_end(ap);
 
         if (result >=0)
         {
@@ -2080,7 +2086,9 @@ void SString::VPrintf(const CHAR *format, va_list args)
         // Clear errno to avoid false alarms
         errno = 0;
 
-        int result = _vsnprintf_s(GetRawANSI(), GetRawCount()+1, _TRUNCATE, format, args);
+        va_copy(ap, args);
+        int result = _vsnprintf_s(GetRawANSI(), GetRawCount()+1, _TRUNCATE, format, ap);
+        va_end(ap);
 
         if (result >= 0)
         {
@@ -2098,7 +2106,7 @@ void SString::VPrintf(const CHAR *format, va_list args)
         else
         if (errno!=0 && errno!=EBADF && errno!=ERANGE)
         {
-            CONSISTENCY_CHECK_MSG(FALSE, "_vsnprintf failed. Potential globalization bug.");
+            CONSISTENCY_CHECK_MSG(FALSE, "_vsnprintf_s failed. Potential globalization bug.");
             ThrowHR(HRESULT_FROM_WIN32(ERROR_NO_UNICODE_TRANSLATION));
         }
     }
@@ -2145,13 +2153,16 @@ void SString::VPrintf(const WCHAR *format, va_list args)
     }
     CONTRACT_END;
 
+    va_list ap;
     // sprintf gives us no means to know how many characters are written
     // other than guessing and trying
 
     if (GetRawCount() > 0)
     {
         // First, try to use the existing buffer
-        int result = _vsnwprintf_s(GetRawUnicode(), GetRawCount()+1, _TRUNCATE, format, args);
+        va_copy(ap, args);
+        int result = _vsnwprintf_s(GetRawUnicode(), GetRawCount()+1, _TRUNCATE, format, ap);
+        va_end(ap);
 
         if (result >= 0)
         {
@@ -2180,7 +2191,9 @@ void SString::VPrintf(const WCHAR *format, va_list args)
         // Clear errno to avoid false alarms
         errno = 0;
 
-        int result = _vsnwprintf_s(GetRawUnicode(), GetRawCount()+1, _TRUNCATE, format, args);
+        va_copy(ap, args);
+        int result = _vsnwprintf_s(GetRawUnicode(), GetRawCount()+1, _TRUNCATE, format, ap);
+        va_end(ap);
 
         if (result >= 0)
         {
@@ -2197,7 +2210,7 @@ void SString::VPrintf(const WCHAR *format, va_list args)
         else
         if (errno!=0 && errno!=EBADF && errno!=ERANGE)
         {
-            CONSISTENCY_CHECK_MSG(FALSE, "_vsnwprintf failed. Potential globalization bug.");
+            CONSISTENCY_CHECK_MSG(FALSE, "_vsnwprintf_s failed. Potential globalization bug.");
             ThrowHR(HRESULT_FROM_WIN32(ERROR_NO_UNICODE_TRANSLATION));
         }
     }
@@ -2215,17 +2228,20 @@ void SString::PVPrintf(const WCHAR *format, va_list args)
     }
     CONTRACT_END;
 
+    va_list ap;
     // sprintf gives us no means to know how many characters are written
     // other than guessing and trying
 
     if (GetRawCount() > 0)
     {
         // First, try to use the existing buffer
+        va_copy(ap, args);
 #if defined(FEATURE_CORESYSTEM)
-        int result = _vsnwprintf_s(GetRawUnicode(), GetRawCount()+1, _TRUNCATE, format, args);
+        int result = _vsnwprintf_s(GetRawUnicode(), GetRawCount()+1, _TRUNCATE, format, ap);
 #else
-        int result = _vswprintf_p(GetRawUnicode(), GetRawCount()+1, format, args);
+        int result = _vswprintf_p(GetRawUnicode(), GetRawCount()+1, format, ap);
 #endif
+        va_end(ap);
         if (result >= 0)
         {
             // succeeded
@@ -2253,11 +2269,13 @@ void SString::PVPrintf(const WCHAR *format, va_list args)
         // Clear errno to avoid false alarms
         errno = 0;
 
+        va_copy(ap, args);
 #if defined(FEATURE_CORESYSTEM)
-        int result = _vsnwprintf_s(GetRawUnicode(), GetRawCount()+1, _TRUNCATE, format, args);
+        int result = _vsnwprintf_s(GetRawUnicode(), GetRawCount()+1, _TRUNCATE, format, ap);
 #else
-        int result = _vswprintf_p(GetRawUnicode(), GetRawCount()+1, format, args);
+        int result = _vswprintf_p(GetRawUnicode(), GetRawCount()+1, format, ap);
 #endif
+        va_end(ap);
 
         if (result >= 0)
         {
@@ -2274,7 +2292,7 @@ void SString::PVPrintf(const WCHAR *format, va_list args)
         else
         if (errno!=0 && errno!=EBADF && errno!=ERANGE)
         {
-            CONSISTENCY_CHECK_MSG(FALSE, "_vsnwprintf failed. Potential globalization bug.");
+            CONSISTENCY_CHECK_MSG(FALSE, "_vsnwprintf_s failed. Potential globalization bug.");
             ThrowHR(HRESULT_FROM_WIN32(ERROR_NO_UNICODE_TRANSLATION));
         }
     }

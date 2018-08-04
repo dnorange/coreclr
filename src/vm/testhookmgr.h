@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 
 // 
@@ -54,7 +53,7 @@ protected:
     Volatile<LONG> m_nHooks; 
     Volatile<LONG> m_cRef;
     CLRTestHookInfo m_pHooks[MAX_TEST_HOOKS];
-    ~CLRTestHookManager();
+    virtual ~CLRTestHookManager();
 public:
     CLRTestHookManager();
     STDMETHOD(AddTestHook)(ICLRTestHook* hook);
@@ -83,7 +82,7 @@ public:
     STDMETHOD(StartingNativeImageBind)(LPCWSTR wszAsmName, BOOL bIsCompilationProcess);
     STDMETHOD(CompletedNativeImageBind)(LPVOID pFile,LPCUTF8 simpleName, BOOL hasNativeImage);
     STDMETHOD(AboutToLockImage)(LPCWSTR wszPath, BOOL bIsCompilationProcess);
-    STDMETHOD_(VOID,DoApproriateWait)( int cObjs, HANDLE *pObjs, INT32 iTimeout, BOOL bWaitAll, int* res);	
+    STDMETHOD_(VOID,DoAppropriateWait)( int cObjs, HANDLE *pObjs, INT32 iTimeout, BOOL bWaitAll, int* res);	
     STDMETHOD(GC)(int generation);
     STDMETHOD(GetSimpleName)(LPVOID domainfile,LPCUTF8* name);	
     STDMETHOD(RuntimeStarted)(DWORD code);	

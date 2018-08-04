@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //
 // EEToProfInterfaceImpl.h
 // 
@@ -22,6 +21,7 @@
 #include "eeprofinterfaces.h"
 #include "shash.h"
 #include "eventtracebase.h"
+#include "gcinterface.h"
 
 class SimpleRWLock;
 
@@ -55,6 +55,8 @@ public:
     BOOL IsCallback4Supported();
     BOOL IsCallback5Supported();
     BOOL IsCallback6Supported();
+    BOOL IsCallback7Supported();
+    BOOL IsCallback8Supported();
 
     HRESULT SetEventMask(DWORD dwEventMask, DWORD dwEventMaskHigh);
 
@@ -68,6 +70,7 @@ public:
     BOOL IsLoadedViaAttach();
     HRESULT EnsureProfilerDetachable();
     void SetUnrevertiblyModifiedILFlag();
+    void SetModifiedRejitState();
 
     FunctionEnter *              GetEnterHook();
     FunctionLeave *              GetLeaveHook();
@@ -169,7 +172,21 @@ public:
     HRESULT JITCompilationStarted(
         FunctionID  functionId,
         BOOL        fIsSafeToBlock);
-    
+
+    HRESULT DynamicMethodJITCompilationStarted(
+        FunctionID  functionId,
+        BOOL        fIsSafeToBlock,
+        LPCBYTE     pILHeader,
+        ULONG       cbILHeader);
+
+    HRESULT DynamicMethodJITCompilationFinished(
+        FunctionID  functionId,
+        HRESULT     hrStatus,
+        BOOL        fIsSafeToBlock);
+
+    HRESULT DynamicMethodUnloaded(
+        FunctionID  functionId);
+
     HRESULT JITCachedFunctionSearchStarted(
         /* [in] */  FunctionID functionId,
         /* [out] */ BOOL * pbUseCachedFunction);
@@ -229,6 +246,9 @@ public:
     HRESULT ModuleAttachedToAssembly( 
         ModuleID    moduleId,
         AssemblyID  AssemblyId);
+
+    HRESULT ModuleInMemorySymbolsUpdated(
+        ModuleID    moduleId);
 
     //
     // Class Events
@@ -484,7 +504,8 @@ private:
     {
     public:
         CHashTableImpl(ULONG iBuckets);
-
+        virtual ~CHashTableImpl();
+        
     protected:
         virtual BOOL Cmp(SIZE_T k1, const HASHENTRY * pc2);
     };
@@ -525,12 +546,16 @@ private:
 
     // Pointer to the profiler's implementation of the callback interface(s).
     // Profilers MUST support ICorProfilerCallback2.
-    // Profilers MAY optionally support ICorProfilerCallback3,4,5
+    // Profilers MAY optionally support ICorProfilerCallback3,4,5,6,7,8,9
     ICorProfilerCallback2 * m_pCallback2;
     ICorProfilerCallback3 * m_pCallback3;
     ICorProfilerCallback4 * m_pCallback4;
     ICorProfilerCallback5 * m_pCallback5;
     ICorProfilerCallback6 * m_pCallback6;
+    ICorProfilerCallback7 * m_pCallback7;
+    ICorProfilerCallback8 * m_pCallback8;
+    ICorProfilerCallback9 * m_pCallback9;
+
     HMODULE                 m_hmodProfilerDLL;
 
     BOOL                    m_fLoadedViaAttach;
@@ -577,6 +602,9 @@ private:
     // Remembers whether the profiler used SetILFunctionBody() which modifies IL in a
     // way that cannot be reverted.  This prevents a detach from succeeding.
     BOOL                    m_fUnrevertiblyModifiedIL;
+
+    // Remember whether the profiler has enabled Rejit, and prevent detach if it has.
+    BOOL                    m_fModifiedRejitState;
     
     GCReferencesData * AllocateMovedReferencesData();
 
@@ -655,7 +683,7 @@ private:
 
     // ELT3 no long keeps track of FunctionID of current managed method.  Therefore, a hash table of bookkeeping 
     // the mapping from FunctionID to clientID is needed to build up ELT2 on top of ELT3.  When ELT2 (slow-path 
-    // or fast-path) is registered by the profiler and the profiler’s IDFunctionMapper requests to hook up the 
+    // or fast-path) is registered by the profiler and the profiler's IDFunctionMapper requests to hook up the 
     // function being loading, the clientID returned by FunctionIDMapper will be saved as the value to be looked 
     // up by the corresponding FunctionID in the hash table.  FunctionIDs can be recycled after an app domain
     // that contains the function bodies is unloaded so this hash table needs to replace the existing FunctionID 

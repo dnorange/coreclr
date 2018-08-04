@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*++
 
@@ -36,11 +35,13 @@ Abstract:
 #if HAVE_COREFOUNDATION
 #define CF_EXCLUDE_CSTD_HEADERS
 #include <CoreFoundation/CoreFoundation.h>
+#include <wctype.h>
 #else
 #include <wctype.h>
 #endif
 
 #include <errno.h>
+#include <algorithm>
 
 SET_DEFAULT_DEBUG_CHANNEL(CRT);
 
@@ -72,146 +73,6 @@ wtolower(wchar_16 c)
 #endif
 
 }
-
-/*******************************************************************************
-Function:
-  Internal_i64tow
-
-Parameters:
-  value
-    - INT64 value to be converted to a string
-  string
-    - out buffer to place interger string
-  radix
-    - numeric base to convert to
-  isI64
-    - TRUE if value is INT64, FALSE if value is a long
-
-Note:
-  - only a radix of ten (and value < 0) will result in a negative
-    sign in the output buffer
-*******************************************************************************/
-LPWSTR Internal_i64tow(INT64 value, LPWSTR string, int radix, BOOL isI64)
-{
-    int length = 0;
-    int n;
-    int r;
-    UINT64 uval = value;
-    LPWSTR stringPtr = string;
-    int start = 0;
-    int end;
-    WCHAR tempCh;
-
-    if (radix < 2 || radix > 36)
-    {
-        ASSERT( "Invalid radix, radix must be between 2 and 36\n" );
-        SetLastError(ERROR_INVALID_PARAMETER);
-        return string;
-    }
-    if (FALSE == isI64)
-    {
-        uval = (ULONG) uval;
-    }
-    if (10 == radix && value < 0)
-    {
-        uval = value * -1;
-    }
-    if(0 == uval)
-    {
-        ++length;
-        *stringPtr++ = '0';
-    }
-    else while (uval > 0)
-    {
-        ++length;
-        n = uval / radix;
-        r = uval - (n * radix);
-        uval /= radix;
-        if (r > 9)
-        {
-            *stringPtr++ = r + 87;
-        }
-        else
-        {
-            *stringPtr++ = r + 48;
-        }
-    }
-    if (10 == radix && value < 0)
-    {
-        *stringPtr++ = '-';
-        ++length;
-    }
-    *stringPtr = 0; /* end the string */
-
-    /* reverse the string */
-    end = length - 1;
-    while (start < end)
-    {
-        tempCh = string[start];
-        string[start] = string[end];
-        string[end] = tempCh;
-        ++start;
-        --end;
-    }
-
-    return string;
-}
-
-/*--
-Function:
-  _itow
-
-16-bit wide character version of the ANSI tolower() function.
-
-  --*/
-wchar_16 *
-__cdecl
-_itow(
-    int value,
-    wchar_16 *string,
-    int radix)
-{
-    wchar_16 *ret;
-
-    PERF_ENTRY(_itow);
-    ENTRY("_itow (value=%d, string=%p, radix=%d)\n",
-          value, string, radix);
-
-    ret = Internal_i64tow(value, string, radix, FALSE);
-
-    LOGEXIT("_itow returns wchar_t* %p\n", ret);
-    PERF_EXIT(_itow);
-
-    return ret;
-}
-
-/*--
-Function:
-  _i64tow
-
-See MSDN doc
---*/
-wchar_16 *
- __cdecl 
-_i64tow(
-    __int64 value, 
-    wchar_16 *string, 
-    int radix)
-{
-    wchar_16 *ret;
-
-    PERF_ENTRY(_i64tow);
-    ENTRY("_i64tow (value=%ld, string=%p, radix=%d)\n",
-          value, string, radix);
-
-    ret = Internal_i64tow(value, string, radix, TRUE);
-
-    LOGEXIT("_i64tow returns wchar_t* %p\n", ret);
-    PERF_EXIT(_i64tow);
-
-    return ret;
-}
-
 
 /*--
 Function:
@@ -620,7 +481,6 @@ PAL_wcstoul(
     PERF_ENTRY(wcstoul);
     ENTRY("wcstoul (nptr=%p (%S), endptr=%p, base=%d)\n", nptr?nptr:W16_NULLSTRING, nptr?nptr:W16_NULLSTRING,
           endptr, base);
-    THREADMarkDiagnostic("PAL_wcstoul -> strtoul");
 
     size = WideCharToMultiByte(CP_ACP, 0, nptr, -1, NULL, 0, NULL, NULL);
     if (!size)
@@ -711,7 +571,6 @@ PAL__wcstoui64(
     PERF_ENTRY(wcstoul);
     ENTRY("_wcstoui64 (nptr=%p (%S), endptr=%p, base=%d)\n", nptr?nptr:W16_NULLSTRING, nptr?nptr:W16_NULLSTRING,
           endptr, base);
-    THREADMarkDiagnostic("PAL__wcstoui64 -> strtoull");
 
     size = WideCharToMultiByte(CP_ACP, 0, nptr, -1, NULL, 0, NULL, NULL);
     if (!size)
@@ -779,7 +638,7 @@ PAL_towlower( wchar_16 c )
                                             kCFAllocatorDefault, 1);
         if (cfString != NULL)
         {
-            CFStringAppendCharacters(cfString, &c, 1);
+            CFStringAppendCharacters(cfString, (const UniChar*)&c, 1);
             CFStringLowercase(cfString, NULL);
             c = CFStringGetCharacterAtIndex(cfString, 0);
             CFRelease(cfString);
@@ -796,7 +655,7 @@ PAL_towlower( wchar_16 c )
     
     if (!GetUnicodeData(c, &dataRec))
     {
-        TRACE( "Unable to retrive unicode data for the character %c.\n", c );
+        TRACE( "Unable to retrieve unicode data for the character %c.\n", c );
         LOGEXIT("towlower returns int %d\n", c );
         PERF_EXIT(towlower);
         return c;
@@ -838,7 +697,7 @@ PAL_towupper( wchar_16 c )
                                             kCFAllocatorDefault, 1);
         if (cfString != NULL)
         {
-            CFStringAppendCharacters(cfString, &c, 1);
+            CFStringAppendCharacters(cfString, (const UniChar*)&c, 1);
             CFStringUppercase(cfString, NULL);
             c = CFStringGetCharacterAtIndex(cfString, 0);
             CFRelease(cfString);
@@ -855,7 +714,7 @@ PAL_towupper( wchar_16 c )
 
     if (!GetUnicodeData(c, &dataRec))
     {
-        TRACE( "Unable to retrive unicode data for the character %c.\n", c );
+        TRACE( "Unable to retrieve unicode data for the character %c.\n", c );
         LOGEXIT("towupper returns int %d\n", c );
         PERF_EXIT(towupper);
         return c;
@@ -907,7 +766,7 @@ PAL_iswupper( wchar_16 c )
 
     if (!GetUnicodeData(c, &dataRec))
     {
-        TRACE( "Unable to retrive unicode data for the character %c.\n", c );
+        TRACE( "Unable to retrieve unicode data for the character %c.\n", c );
         goto exit;
     }
     
@@ -953,7 +812,7 @@ PAL_iswlower( wchar_16 c )
     
     if (!GetUnicodeData(c, &dataRec))
     {
-        TRACE( "Unable to retrive unicode data for the character %c.\n", c );
+        TRACE( "Unable to retrieve unicode data for the character %c.\n", c );
         goto exit;
     }
     
@@ -1336,16 +1195,22 @@ PAL_wcsstr(
         i = 0;
         while (1)
         {
-            if (*(string + i) == 0 || *(strCharSet + i) == 0)
+            if (*(strCharSet + i) == 0)
             {
                 ret = (wchar_16 *) string;
                 goto leave;
             }
-            if (*(string + i) != *(strCharSet + i))
+            else if (*(string + i) == 0)
+            {
+                ret = NULL;
+                goto leave;
+            }
+            else if (*(string + i) != *(strCharSet + i))
             {
                 break;
             }
-        i++;
+
+            i++;
         }
         string++;
     }
@@ -1373,7 +1238,7 @@ PAL_wcsncpy( wchar_16 * strDest, const wchar_16 *strSource, size_t count )
           strDest, strSource, strSource, (unsigned long) count);
     
     memset( strDest, 0, length );
-    length = min( count, PAL_wcslen( strSource ) ) * sizeof( wchar_16 );
+    length = std::min( count, PAL_wcslen( strSource ) ) * sizeof( wchar_16 );
     memcpy( strDest, strSource, length );
     
     LOGEXIT("wcsncpy returning (wchar_16*): %p\n", strDest);
@@ -1449,7 +1314,7 @@ PAL_wcsncat( wchar_16 * strDest, const wchar_16 *strSource, size_t count )
 static BOOL MISC_CRT_WCSTOD_IsValidCharacter( WCHAR c )
 {
     if ( c == '+' || c == '-' || c == '.' || ( c >= '0' && c <= '9' ) || 
-         c == 'e' || c == 'E' || c == 'd' || c == 'd' )
+         c == 'e' || c == 'E' || c == 'd' || c == 'D' )
     {
         return TRUE;
     }
@@ -1481,7 +1346,6 @@ PAL_wcstod( const wchar_16 * nptr, wchar_16 **endptr )
 
     PERF_ENTRY(wcstod);
     ENTRY( "wcstod( %p (%S), %p (%S) )\n", nptr, nptr, endptr , endptr );
-    THREADMarkDiagnostic("PAL_wcstod -> strtod");
 
     if ( !nptr )
     {
@@ -1526,7 +1390,7 @@ PAL_wcstod( const wchar_16 * nptr, wchar_16 **endptr )
                 /* See if strtod failed. */
                 if ( RetVal == 0.0 && ScanStop == lpStringRep )
                 {
-                    ASSERT( "An error occured in the conversion.\n" );
+                    ASSERT( "An error occurred in the conversion.\n" );
                     lpEndOfExpression = (LPWSTR)nptr;
                 }
             }
@@ -1559,77 +1423,6 @@ PAL_wcstod( const wchar_16 * nptr, wchar_16 **endptr )
     PERF_EXIT(wcstod);
     return RetVal;
 }
-
-/*++
-Function :
-
-    _ui64tow
-
-See MSDN for more details.
---*/
-wchar_16 *
-__cdecl
-_ui64tow( unsigned __int64 value , wchar_16 * string , int radix )
-{
-    UINT ReversedIndex = 0;
-    WCHAR ReversedString[ 65 ];
-    LPWSTR lpString = string;
-    UINT Index = 0;
-
-    PERF_ENTRY(_ui64tow);
-    ENTRY( "_ui64tow( value=%I64d, string=%p (%S), radix=%d )\n", 
-           value, string, string, radix );
-
-    if ( !string )
-    {
-        ERROR( "string has to be a valid pointer.\n" );
-        LOGEXIT( "_ui64tow returning NULL.\n" );
-        PERF_EXIT(_ui64tow);
-        return NULL;
-    }
-    if ( radix < 2 || radix > 36 )
-    {
-        ERROR( "radix has to be between 2 and 36.\n" );
-        LOGEXIT( "_ui64tow returning NULL.\n" );
-        PERF_EXIT(_ui64tow);
-        return NULL;
-    }
-
-    if(0 == value)
-    {
-        ReversedString[0] = '0';
-        Index++;
-    }
-    else while ( value )
-    {
-        int temp = value % radix;
-        value /= radix;
-        
-        if ( temp < 10 )
-        {
-            ReversedString[ Index ] = temp + '0';
-            Index++;
-        }
-        else
-        {
-            ReversedString[ Index ] = temp - 10 + 'a';
-            Index++;
-        }
-    }
-    
-    /* Reverse the string. */
-    ReversedIndex = Index;
-    for ( Index = 0; ReversedIndex > 0; ReversedIndex--, Index++ )
-    {
-        string[ Index ] = ReversedString[ ReversedIndex - 1 ];
-    }
-
-    string[ Index ] = '\0';
-    LOGEXIT( "_ui64tow returning %p (%S).\n", lpString , lpString );
-    PERF_EXIT(_ui64tow);
-    return lpString;
-}
-
 
 /*++
 Function:

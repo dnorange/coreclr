@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //
 // ProfAttach.h
 // 
@@ -19,6 +18,7 @@
 #define __PROF_ATTACH_H__
 
 #include "internalunknownimpl.h"
+#include "corprof.h"
 
 //---------------------------------------------------------------------------------------
 // Structure representing the runtime's version.  Used to negotiate versions between the
@@ -122,13 +122,13 @@ public:
     // customize its response for the format expected by the trigger.
     VersionBlock    m_triggerVersion;
 
-    // The GUID of the profiler’s COM object to load
+    // The GUID of the profiler's COM object to load
     CLSID           m_clsidProfiler;
 
-    // The path to the profiler’s COM object to load
-    WCHAR           m_wszProfilerPath[MAX_PATH];
+    // The path to the profiler's COM object to load
+    WCHAR           m_wszProfilerPath[MAX_LONGPATH];
 
-    // Client data is custom data that the profiler’s
+    // Client data is custom data that the profiler's
     // trigger-process wishes to copy into this process.
     // Profiler authors will typically use this as a way to
     // communicate to the profiler DLL what options the profiler
@@ -276,7 +276,7 @@ public:
     // available on demand (when finalizer thread detects the attach event has been
     // signaled).  The mode used by default is determined by the gc mode (server vs.
     // workstation).  But this can be overridden in either case by setting
-    // COMPLUS_AttachThreadAlwaysOn: 0=kOnDemand, nonzero=kAlwaysOn.
+    // COMPlus_AttachThreadAlwaysOn: 0=kOnDemand, nonzero=kAlwaysOn.
     enum AttachThreadingMode
     {
         // Too early in startup to know the mode yet
@@ -420,7 +420,5 @@ public:
         UINT cbClientData));
 };
 
-
-HRESULT ICLRProfilingGetClassObject(REFCLSID rclsid, REFIID riid, void **ppv);
 
 #endif // __PROF_ATTACH_H__

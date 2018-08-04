@@ -1,3 +1,4 @@
-add_subdirectory(strike)
-add_subdirectory(DacTableGen)
-add_subdirectory(diasdk)
+if(WIN32)
+    add_subdirectory(DacTableGen)
+    add_subdirectory(Strike)
+endif(WIN32)

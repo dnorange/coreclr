@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //*****************************************************************************
 
 // 
@@ -340,12 +339,7 @@ HRESULT CLiteWeightStgdbRW::OpenForRead(
         // If we're taking ownership of this memory.....
         if (IsOfTakeOwnership(dwFlags))
         {
-#ifdef FEATURE_METADATA_STANDALONE_WINRT_RO
-            // Shared memory uses ole32.dll - we cannot depend on it in the standalone WinRT Read-Only DLL
-            IfFailGo(E_INVALIDARG);
-#else
             dmOpenFlags = (DBPROPMODE)(dmOpenFlags | DBPROP_TMODEF_SHAREDMEM);
-#endif //!FEATURE_METADATA_STANDALONE_WINRT_RO
         }
 #ifdef FEATURE_METADATA_LOAD_TRUSTED_IMAGES
         if (IsOfTrustedImage(dwFlags))
@@ -1127,14 +1121,16 @@ CLiteWeightStgdbRW::GetRawStreamInfo(
     STORAGEHEADER  sHdr;            // Header for the storage.
     PSTORAGESTREAM pStream;         // Pointer to each stream.
     ULONG          i;               // Loop control.
+    void          *pData;
+    ULONG          cbData;
 
 #ifdef FEATURE_METADATA_CUSTOM_DATA_SOURCE
     if (m_pStgIO == NULL)
         IfFailGo(COR_E_NOTSUPPORTED);
 #endif
 
-    void *pData = m_pStgIO->m_pData;
-    ULONG cbData = m_pStgIO->m_cbData;
+    pData = m_pStgIO->m_pData;
+    cbData = m_pStgIO->m_cbData;
     
     // Validate the signature of the format, or it isn't ours.
     IfFailGo(MDFormat::VerifySignature((PSTORAGESIGNATURE) pData, cbData));
@@ -1250,24 +1246,5 @@ BOOL
 CLiteWeightStgdbRW::IsValidFileNameLength(
     const WCHAR * wszFileName)
 {
-    static const WCHAR const_wszLongPathPrefix[] = W("\\\\?\\");
-
-    if (wszFileName == NULL)
-    {
-        return TRUE;
-    }
-    size_t cchFileName = wcslen(wszFileName);
-    if (cchFileName < _MAX_PATH)
-    {
-        return TRUE;
-    }
-    if (SString::_wcsnicmp(wszFileName, const_wszLongPathPrefix, _countof(const_wszLongPathPrefix) - 1) != 0)
-    {   // Path does not have long path prefix \\?\ (as required by CreateFile API)
-        return FALSE;
-    }
-    if (cchFileName < 32767)
-    {   // Limit for the long path length as defined in CreateFile API
-        return TRUE;
-    }
-    return FALSE;
+    return TRUE;
 } // CLiteWeightStgdbRW::IsValidFileNameLength

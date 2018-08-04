@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 /* ------------------------------------------------------------------------- *
  * DbgIPCEvents.h -- header file for private Debugger data shared by various
 // 
@@ -130,16 +129,15 @@ struct MSLAYOUT DebuggerIPCRuntimeOffsets
     void   *m_excepNotForRuntimeBPAddr;
     void   *m_notifyRSOfSyncCompleteBPAddr;
     void   *m_raiseExceptionAddr;                       // The address of kernel32!RaiseException in the debuggee
+    DWORD   m_debuggerWordTLSIndex;                     // The TLS slot for the debugger word used in the debugger hijack functions
 #endif // FEATURE_INTEROP_DEBUGGING
     SIZE_T  m_TLSIndex;                                 // The TLS index the CLR is using to hold Thread objects
     SIZE_T  m_TLSIsSpecialIndex;                        // The index into the Predef block of the the "IsSpecial" status for a thread.
     SIZE_T  m_TLSCantStopIndex;                         // The index into the Predef block of the the Can't-Stop count.
-    SIZE_T  m_TLSIndexOfPredefs;                        // The TLS index of the Predef block.
     SIZE_T  m_EEThreadStateOffset;                      // Offset of m_state in a Thread
     SIZE_T  m_EEThreadStateNCOffset;                    // Offset of m_stateNC in a Thread
     SIZE_T  m_EEThreadPGCDisabledOffset;                // Offset of the bit for whether PGC is disabled or not in a Thread
     DWORD   m_EEThreadPGCDisabledValue;                 // Value at m_EEThreadPGCDisabledOffset that equals "PGC disabled".
-    SIZE_T  m_EEThreadDebuggerWordOffset;               // Offset of debugger word in a Thread
     SIZE_T  m_EEThreadFrameOffset;                      // Offset of the Frame ptr in a Thread
     SIZE_T  m_EEThreadMaxNeededSize;                    // Max memory to read to get what we need out of a Thread object
     DWORD   m_EEThreadSteppingStateMask;                // Mask for Thread::TSNC_DebuggerIsStepping
@@ -181,7 +179,7 @@ struct MSLAYOUT DebuggerIPCRuntimeOffsets
 // aren't any embedded buffers in the DebuggerIPCControlBlock).
 
 #if defined(DBG_TARGET_X86) || defined(DBG_TARGET_ARM)
-#define CorDBIPC_BUFFER_SIZE (1500) // hand tuned to ensure that ipc block in IPCHeader.h fits in 1 page.
+#define CorDBIPC_BUFFER_SIZE (2088) // hand tuned to ensure that ipc block in IPCHeader.h fits in 1 page.
 #else  // !_TARGET_X86_ && !_TARGET_ARM_
 // This is the size of a DebuggerIPCEvent.  You will hit an assert in Cordb::Initialize() (DI\process.cpp)
 // if this is not defined correctly.  AMD64 actually has a page size of 0x1000, not 0x2000.
@@ -221,7 +219,7 @@ struct MSLAYOUT DebuggerIPCControlBlock
 
 #if defined(DBG_TARGET_WIN64)
     // 64-bit needs this padding to make the handles after this aligned.
-    // But x86 can't have this padding b/c it breaks binary compatability between v1.1 and v2.0.
+    // But x86 can't have this padding b/c it breaks binary compatibility between v1.1 and v2.0.
     ULONG padding4;
 #endif // DBG_TARGET_WIN64
 
@@ -229,7 +227,7 @@ struct MSLAYOUT DebuggerIPCControlBlock
     RemoteHANDLE               m_rightSideEventAvailable;
     RemoteHANDLE               m_rightSideEventRead;
 
-    // @dbgtodo  inspection - this is where LSEA and LSER used to be. We need to the padding to maintain binary compatability.
+    // @dbgtodo  inspection - this is where LSEA and LSER used to be. We need to the padding to maintain binary compatibility.
     // Eventually, we expect to remove this whole block.
     RemoteHANDLE               m_paddingObsoleteLSEA;
     RemoteHANDLE               m_paddingObsoleteLSER;
@@ -321,7 +319,7 @@ struct MSLAYOUT DebuggerIPCControlBlockTransport
 
 #if defined(DBG_TARGET_WIN64)
     // 64-bit needs this padding to make the handles after this aligned.
-    // But x86 can't have this padding b/c it breaks binary compatability between v1.1 and v2.0.
+    // But x86 can't have this padding b/c it breaks binary compatibility between v1.1 and v2.0.
     ULONG padding4;
 #endif // DBG_TARGET_WIN64
 
@@ -880,7 +878,8 @@ DEFINE_VMPTR(class SimpleRWLock,    PTR_SimpleRWLock,   VMPTR_SimpleRWLock);
 DEFINE_VMPTR(class SimpleRWLock,    PTR_SimpleRWLock,   VMPTR_RWLock);
 DEFINE_VMPTR(struct ReJitInfo,       PTR_ReJitInfo,      VMPTR_ReJitInfo);
 DEFINE_VMPTR(struct SharedReJitInfo, PTR_SharedReJitInfo, VMPTR_SharedReJitInfo);
-
+DEFINE_VMPTR(class NativeCodeVersionNode, PTR_NativeCodeVersionNode, VMPTR_NativeCodeVersionNode);
+DEFINE_VMPTR(class ILCodeVersionNode, PTR_ILCodeVersionNode, VMPTR_ILCodeVersionNode);
 
 typedef CORDB_ADDRESS GENERICS_TYPE_TOKEN;
 
@@ -895,7 +894,7 @@ template <int nMaxLengthIncludingNull>
 class MSLAYOUT EmbeddedIPCString
 {
 public:
-    // Set, caller responsiblity that wcslen(pData) < nMaxLengthIncludingNull
+    // Set, caller responsibility that wcslen(pData) < nMaxLengthIncludingNull
     void SetString(const WCHAR * pData)
     {
         // If the string doesn't fit into the buffer, that's an issue (and so this is a real
@@ -1356,11 +1355,11 @@ struct MSLAYOUT DebuggerIPCE_JITFuncData
     LSPTR_DJI   nativeCodeJITInfoToken;
     VMPTR_MethodDesc vmNativeCodeMethodDescToken;
 
-#if defined(DBG_TARGET_WIN64) || defined(DBG_TARGET_ARM)
+#ifdef WIN64EXCEPTIONS
     BOOL         fIsFilterFrame;
     SIZE_T       parentNativeOffset;
     FramePointer fpParentOrSelf;
-#endif // DBG_TARGET_WIN64 || DBG_TARGET_ARM
+#endif // WIN64EXCEPTIONS
 
     // indicates if the MethodDesc is a generic function or a method inside a generic class (or
     // both!).
@@ -2292,7 +2291,7 @@ struct MSLAYOUT DebuggerIPCEvent
         struct MSLAYOUT
         {
             CONNID     connectionId;
-            EmbeddedIPCString<MAX_PATH> wzConnectionName;
+            EmbeddedIPCString<MAX_LONGPATH> wzConnectionName;
         } CreateConnection;
 
         struct MSLAYOUT

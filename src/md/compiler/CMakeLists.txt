@@ -1,5 +1,3 @@
-add_definitions(-DNO_CRT)
-
 set(MDCOMPILER_SOURCES
   assemblymd.cpp
   assemblymd_emit.cpp
@@ -30,6 +28,5 @@ endif(CLR_CMAKE_PLATFORM_UNIX)
 
 add_subdirectory(dac)
 add_subdirectory(wks)
-if(WIN32)
-  add_subdirectory(dbi)
-endif(WIN32)
+add_subdirectory(dbi)
+add_subdirectory(crossgen)

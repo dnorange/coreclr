@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 /*****************************************************************************
  **                                                                         **
@@ -184,6 +183,11 @@ public:
         _Alloc<TRUE /*bGrow*/, TRUE /*bThrow*/>(iItems);
     }
 
+#ifdef __llvm__
+    // This makes sure that we will not get an undefined symbol
+    // when building a release version of libcoreclr using LLVM.
+    __attribute__((used))
+#endif // __llvm__
     HRESULT ReSizeNoThrow(SIZE_T iItems);
 
     void Shrink(SIZE_T iItems)

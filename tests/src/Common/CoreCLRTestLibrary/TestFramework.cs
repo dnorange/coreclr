@@ -1,5 +1,6 @@
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //
 
 using System;
@@ -8,6 +9,8 @@ namespace TestLibrary
 {
     public static class TestFramework
     {
+        private const int DEFAULT_SEED = 20010415;
+
         public static void LogInformation(string str)
         {
             Logging.WriteLine(str);
@@ -23,25 +26,24 @@ namespace TestLibrary
 
         public static void BeginTestCase(string title)
         {
-            int seed;
-#if WINCORESYS
-            seed = 20010415;
-#else
-            Random rand = new Random();
+            int seed = DEFAULT_SEED;
 
-            if (Env.GetEnvVariable("CORECLR_SEED") != null)
+            if (Environment.GetEnvironmentVariable("CORECLR_SEED") != null)
             {
-                try
+                string CORECLR_SEED = Environment.GetEnvironmentVariable("CORECLR_SEED");
+
+                if (!int.TryParse(CORECLR_SEED, out seed))
                 {
-                    seed = int.Parse(Env.GetEnvVariable("CORECLR_SEED"));
+                    if (string.Equals(CORECLR_SEED, "random", StringComparison.OrdinalIgnoreCase))
+                    {
+                        seed = new Random().Next();
+                    }
+                    else
+                    {
+                        seed = DEFAULT_SEED;
+                    }
                 }
-                catch (FormatException) { seed = rand.Next(); }
             }
-            else
-            {
-                seed = rand.Next();
-            }
-#endif
 
             Generator.m_rand = new Random(seed);
 

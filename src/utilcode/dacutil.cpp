@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //*****************************************************************************
 //
 // Internal data access functionality.
@@ -14,9 +13,6 @@
 #include <winwrap.h>
 #include <utilcode.h>
 #include <dacprivate.h>
-#ifdef FEATURE_IPCMAN
-#include <ipcmanagerinterface.h>
-#endif // FEATURE_IPCMAN
 
 //----------------------------------------------------------------------------
 //
@@ -152,7 +148,7 @@ LiveProcDataTarget::ReadVirtual(
     {
         // Calculate bytes to read and don't let read cross
         // a page boundary.
-        readSize = OS_PAGE_SIZE - (ULONG32)(address & (OS_PAGE_SIZE - 1));
+        readSize = GetOsPageSize() - (ULONG32)(address & (GetOsPageSize() - 1));
         readSize = min(request, readSize);
 
         if (!ReadProcessMemory(m_process, (PVOID)(ULONG_PTR)address,

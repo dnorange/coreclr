@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //*****************************************************************************
 
 // 
@@ -816,7 +815,7 @@ BOOL CordbClass::GotUnallocatedStatic(DacDbiArrayList<FieldData> * pFieldList)
         {
             // The address for a regular static field isn't available yet
             // How can this happen?  Statics appear to get allocated during domain load.
-            // There may be some lazieness or a race-condition involved.
+            // There may be some laziness or a race-condition involved.
             fGotUnallocatedStatic = TRUE;
         }
         ++count;

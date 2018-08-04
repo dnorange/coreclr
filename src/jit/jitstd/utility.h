@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 
 
@@ -9,6 +8,21 @@
 
 namespace jitstd
 {
+
+template <typename T>
+inline 
+T&& forward(typename jitstd::remove_reference<T>::type& arg)
+{
+    return static_cast<T&&>(arg);
+}
+
+template <typename T>
+inline 
+T&& forward(typename jitstd::remove_reference<T>::type&& arg)
+{
+    static_assert(!jitstd::is_lvalue_reference<T>::value, "unexpected lvalue reference");
+    return static_cast<T&&>(arg);
+}
 
 namespace utility
 {
@@ -31,19 +45,6 @@ namespace utility
     }; 
     
  
-    // Helper to allocate objects of any type, given an allocator of void type.
-    //
-    // @param alloc An allocator of void type used to create an allocator of type T.
-    // @param count The number of objects of type T that need to be allocated.
-    //
-    // @return A pointer to an object or an array of objects that was allocated.
-    template <typename T>
-    inline
-    static T* allocate(jitstd::allocator<void>& alloc, size_t count = 1)
-    {
-        return jitstd::allocator<T>(alloc).allocate(count);
-    }
-
     // Ensures that "wset" is the union of the initial state of "wset" and "rset".
     // Elements from "rset" that were not in "wset" are added to "cset."
     template <typename Set>

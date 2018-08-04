@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //*****************************************************************************
 // debugshim.cpp
 // 
@@ -39,7 +38,15 @@
 // CLRDebuggingImpl implementation (ICLRDebugging)
 //*****************************************************************************
 
-typedef HRESULT (__stdcall  *OpenVirtualProcessImplFnPtr)(ULONG64 clrInstanceId, 
+typedef HRESULT (STDAPICALLTYPE  *OpenVirtualProcessImpl2FnPtr)(ULONG64 clrInstanceId, 
+    IUnknown * pDataTarget,
+    LPCWSTR pDacModulePath,
+    CLR_DEBUGGING_VERSION * pMaxDebuggerSupportedVersion,
+    REFIID riid,
+    IUnknown ** ppInstance,
+    CLR_DEBUGGING_PROCESS_FLAGS * pdwFlags);
+
+typedef HRESULT (STDAPICALLTYPE  *OpenVirtualProcessImplFnPtr)(ULONG64 clrInstanceId, 
     IUnknown * pDataTarget,
     HMODULE hDacDll,
     CLR_DEBUGGING_VERSION * pMaxDebuggerSupportedVersion,
@@ -47,12 +54,14 @@ typedef HRESULT (__stdcall  *OpenVirtualProcessImplFnPtr)(ULONG64 clrInstanceId,
     IUnknown ** ppInstance,
     CLR_DEBUGGING_PROCESS_FLAGS * pdwFlags);
 
-typedef HRESULT (__stdcall  *OpenVirtualProcess2FnPtr)(ULONG64 clrInstanceId, 
+typedef HRESULT (STDAPICALLTYPE  *OpenVirtualProcess2FnPtr)(ULONG64 clrInstanceId, 
     IUnknown * pDataTarget,
     HMODULE hDacDll,
     REFIID riid,
     IUnknown ** ppInstance,
     CLR_DEBUGGING_PROCESS_FLAGS * pdwFlags);
+
+typedef HMODULE (STDAPICALLTYPE  *LoadLibraryWFnPtr)(LPCWSTR lpLibFileName);
 
 // Implementation of ICLRDebugging::OpenVirtualProcess
 //
@@ -82,125 +91,226 @@ STDMETHODIMP CLRDebuggingImpl::OpenVirtualProcess(
     ICorDebugDataTarget * pDt = NULL;
     HMODULE hDbi = NULL;
     HMODULE hDac = NULL;
+    LPWSTR pDacModulePath = NULL;
+    LPWSTR pDbiModulePath = NULL;
     DWORD dbiTimestamp;
     DWORD dbiSizeOfImage;
-    WCHAR dbiName[MAX_PATH];
+    WCHAR dbiName[MAX_PATH_FNAME] = { 0 };
     DWORD dacTimestamp;
     DWORD dacSizeOfImage;
-    WCHAR dacName[MAX_PATH];
+    WCHAR dacName[MAX_PATH_FNAME] = { 0 };
     CLR_DEBUGGING_VERSION version;
     BOOL versionSupportedByCaller = FALSE;
-    
-    
 
-        // argument checking
-        if( (ppProcess != NULL || pFlags != NULL) && pLibraryProvider == NULL)
-        {
-            hr = E_POINTER; // the library provider must be specified if either
-                                // ppProcess or pFlags is non-NULL
-        }
-        else if( (ppProcess != NULL || pFlags != NULL) && pMaxDebuggerSupportedVersion == NULL)
-        {
-            hr = E_POINTER; // the max supported version must be specified if either
-                                // ppProcess or pFlags is non-NULL
-        }
-        else if(pVersion != NULL && pVersion->wStructVersion != 0)
-        {
-            hr = CORDBG_E_UNSUPPORTED_VERSION_STRUCT;
-        }
-        else if(FAILED(pDataTarget->QueryInterface(__uuidof(ICorDebugDataTarget), (void**) &pDt)))
-        {
-            hr = CORDBG_E_MISSING_DATA_TARGET_INTERFACE;
-        }
+    // argument checking
+    if ((ppProcess != NULL || pFlags != NULL) && pLibraryProvider == NULL)
+    {
+        hr = E_POINTER; // the library provider must be specified if either
+                            // ppProcess or pFlags is non-NULL
+    }
+    else if ((ppProcess != NULL || pFlags != NULL) && pMaxDebuggerSupportedVersion == NULL)
+    {
+        hr = E_POINTER; // the max supported version must be specified if either
+                            // ppProcess or pFlags is non-NULL
+    }
+    else if (pVersion != NULL && pVersion->wStructVersion != 0)
+    {
+        hr = CORDBG_E_UNSUPPORTED_VERSION_STRUCT;
+    }
+    else if (FAILED(pDataTarget->QueryInterface(__uuidof(ICorDebugDataTarget), (void**)&pDt)))
+    {
+        hr = CORDBG_E_MISSING_DATA_TARGET_INTERFACE;
+    }
 
-        if(SUCCEEDED(hr))
-        {
-            // get CLR version
-            // The expectation is that new versions of the CLR will continue to use the same GUID
-            // (unless there's a reason to hide them from older shims), but debuggers will tell us the
-            // CLR version they're designed for and mscordbi.dll can decide whether or not to accept it.
-            version.wStructVersion = 0;
-            hr = GetCLRInfo(pDt, 
-                            moduleBaseAddress,
-                            &version,
-                            &dbiTimestamp,
-                            &dbiSizeOfImage,
-                            dbiName,
-                            MAX_PATH,
-                            &dacTimestamp,
-                            &dacSizeOfImage,
-                            dacName,
-                            MAX_PATH);
-        }
+    if (SUCCEEDED(hr))
+    {
+        // get CLR version
+        // The expectation is that new versions of the CLR will continue to use the same GUID
+        // (unless there's a reason to hide them from older shims), but debuggers will tell us the
+        // CLR version they're designed for and mscordbi.dll can decide whether or not to accept it.
+        version.wStructVersion = 0;
+        hr = GetCLRInfo(pDt,
+            moduleBaseAddress,
+            &version,
+            &dbiTimestamp,
+            &dbiSizeOfImage,
+            dbiName,
+            MAX_PATH_FNAME,
+            &dacTimestamp,
+            &dacSizeOfImage,
+            dacName,
+            MAX_PATH_FNAME);
+    }
 
-        // If we need to fetch either the process info or the flags info then we need to find
-        // mscordbi and DAC and do the version specific OVP work
-        if(SUCCEEDED(hr) && (ppProcess != NULL || pFlags != NULL))
+    // If we need to fetch either the process info or the flags info then we need to find
+    // mscordbi and DAC and do the version specific OVP work
+    if (SUCCEEDED(hr) && (ppProcess != NULL || pFlags != NULL))
+    {
+        ICLRDebuggingLibraryProvider2* pLibraryProvider2;
+        if (SUCCEEDED(pLibraryProvider->QueryInterface(__uuidof(ICLRDebuggingLibraryProvider2), (void**)&pLibraryProvider2)))
         {
-            // ask library provider for dbi
-            if(FAILED(pLibraryProvider->ProvideLibrary(dbiName, dbiTimestamp, dbiSizeOfImage, &hDbi)) ||
+            if (FAILED(pLibraryProvider2->ProvideLibrary2(dbiName, dbiTimestamp, dbiSizeOfImage, &pDbiModulePath)) ||
+                pDbiModulePath == NULL)
+            {
+                hr = CORDBG_E_LIBRARY_PROVIDER_ERROR;
+            }
+
+            if (SUCCEEDED(hr))
+            {
+                hDbi = LoadLibraryW(pDbiModulePath);
+                if (hDbi == NULL)
+                {
+                    hr = HRESULT_FROM_WIN32(GetLastError());
+                }
+            }
+
+            if (SUCCEEDED(hr))
+            {
+                // Adjust the timestamp and size of image if this DAC is a known buggy version and needs to be retargeted
+                RetargetDacIfNeeded(&dacTimestamp, &dacSizeOfImage);
+
+                // Ask library provider for dac
+                if (FAILED(pLibraryProvider2->ProvideLibrary2(dacName, dacTimestamp, dacSizeOfImage, &pDacModulePath)) ||
+                    pDacModulePath == NULL)
+                {
+                    hr = CORDBG_E_LIBRARY_PROVIDER_ERROR;
+                }
+
+                if (SUCCEEDED(hr))
+                {
+                    hDac = LoadLibraryW(pDacModulePath);
+                    if (hDac == NULL)
+                    {
+                        hr = HRESULT_FROM_WIN32(GetLastError());
+                    }
+                }
+            }
+
+            pLibraryProvider2->Release();
+        }
+        else {
+            // Ask library provider for dbi
+            if (FAILED(pLibraryProvider->ProvideLibrary(dbiName, dbiTimestamp, dbiSizeOfImage, &hDbi)) ||
                 hDbi == NULL)
             {
                 hr = CORDBG_E_LIBRARY_PROVIDER_ERROR;
             }
 
-            if(SUCCEEDED(hr))
+            if (SUCCEEDED(hr))
             {
                 // Adjust the timestamp and size of image if this DAC is a known buggy version and needs to be retargeted
                 RetargetDacIfNeeded(&dacTimestamp, &dacSizeOfImage);
 
                 // ask library provider for dac
-                if(FAILED(pLibraryProvider->ProvideLibrary(dacName, dacTimestamp, dacSizeOfImage, &hDac)) ||
+                if (FAILED(pLibraryProvider->ProvideLibrary(dacName, dacTimestamp, dacSizeOfImage, &hDac)) ||
                     hDac == NULL)
                 {
                     hr = CORDBG_E_LIBRARY_PROVIDER_ERROR;
                 }
             }
+        }
 
-            if(SUCCEEDED(hr))
+        *ppProcess = NULL;
+
+        if (SUCCEEDED(hr) && pDacModulePath != NULL)
+        {
+            // Get access to the latest OVP implementation and call it
+            OpenVirtualProcessImpl2FnPtr ovpFn = (OpenVirtualProcessImpl2FnPtr)GetProcAddress(hDbi, "OpenVirtualProcessImpl2");
+            if (ovpFn != NULL)
             {
-                // get access to OVP and call it
-                OpenVirtualProcessImplFnPtr ovpFn = (OpenVirtualProcessImplFnPtr) GetProcAddress(hDbi, "OpenVirtualProcessImpl");
-                if(ovpFn == NULL)
+                hr = ovpFn(moduleBaseAddress, pDataTarget, pDacModulePath, pMaxDebuggerSupportedVersion, riidProcess, ppProcess, pFlags);
+                if (FAILED(hr))
                 {
-                    // Fallback to CLR v4 Beta1 path, but skip some of the checking we'd normally do (maxSupportedVersion, etc.)
-                    OpenVirtualProcess2FnPtr ovp2Fn = (OpenVirtualProcess2FnPtr) GetProcAddress(hDbi, "OpenVirtualProcess2");
-                    if (ovp2Fn == NULL)
+                    _ASSERTE(ppProcess == NULL || *ppProcess == NULL);
+                    _ASSERTE(pFlags == NULL || *pFlags == 0);
+                }
+            }
+#ifdef FEATURE_PAL
+            else
+            {
+                // On Linux/MacOS the DAC module handle needs to be re-created using the DAC PAL instance
+                // before being passed to DBI's OpenVirtualProcess* implementation. The DBI and DAC share 
+                // the same PAL where dbgshim has it's own.
+                LoadLibraryWFnPtr loadLibraryWFn = (LoadLibraryWFnPtr)GetProcAddress(hDac, "LoadLibraryW");
+                if (loadLibraryWFn != NULL)
+                {
+                    hDac = loadLibraryWFn(pDacModulePath);
+                    if (hDac == NULL)
                     {
-                        hr = CORDBG_E_LIBRARY_PROVIDER_ERROR;
-                    }
-                    else
-                    {
-                        hr = ovp2Fn(moduleBaseAddress, pDataTarget, hDac, riidProcess, ppProcess, pFlags);
+                        hr = E_HANDLE;
                     }
                 }
                 else
                 {
-                    // Have a CLR v4 Beta2+ DBI, call it and let it do the version check
-                    hr = ovpFn(moduleBaseAddress, pDataTarget, hDac, pMaxDebuggerSupportedVersion, riidProcess, ppProcess, pFlags);
-                    if(FAILED(hr))
-                    {
-                        _ASSERTE(ppProcess == NULL || *ppProcess == NULL);
-                        _ASSERTE(pFlags == NULL || *pFlags == 0);
-                    }
+                    hr = E_HANDLE;
+                }
+            }
+#endif // FEATURE_PAL
+        }
+
+        // If no errors so far and "OpenVirtualProcessImpl2" doesn't exist
+        if (SUCCEEDED(hr) && *ppProcess == NULL)
+        {
+            // Get access to OVP and call it
+            OpenVirtualProcessImplFnPtr ovpFn = (OpenVirtualProcessImplFnPtr)GetProcAddress(hDbi, "OpenVirtualProcessImpl");
+            if (ovpFn == NULL)
+            {
+                // Fallback to CLR v4 Beta1 path, but skip some of the checking we'd normally do (maxSupportedVersion, etc.)
+                OpenVirtualProcess2FnPtr ovp2Fn = (OpenVirtualProcess2FnPtr)GetProcAddress(hDbi, "OpenVirtualProcess2");
+                if (ovp2Fn == NULL)
+                {
+                    hr = CORDBG_E_LIBRARY_PROVIDER_ERROR;
+                }
+                else
+                {
+                    hr = ovp2Fn(moduleBaseAddress, pDataTarget, hDac, riidProcess, ppProcess, pFlags);
+                }
+            }
+            else
+            {
+                // Have a CLR v4 Beta2+ DBI, call it and let it do the version check
+                hr = ovpFn(moduleBaseAddress, pDataTarget, hDac, pMaxDebuggerSupportedVersion, riidProcess, ppProcess, pFlags);
+                if (FAILED(hr))
+                {
+                    _ASSERTE(ppProcess == NULL || *ppProcess == NULL);
+                    _ASSERTE(pFlags == NULL || *pFlags == 0);
                 }
             }
         }
-    
-        //version is still valid in some failure cases
-        if(pVersion != NULL &&
-            (SUCCEEDED(hr) ||
-            (hr == CORDBG_E_UNSUPPORTED_DEBUGGING_MODEL) ||
-            (hr == CORDBG_E_UNSUPPORTED_FORWARD_COMPAT)))
-        {
-            memcpy(pVersion, &version, sizeof(CLR_DEBUGGING_VERSION));
-        }
+    }
 
-        // free the data target we QI'ed earlier
-        if(pDt != NULL)
-        {
-            pDt->Release();
-        }
+    //version is still valid in some failure cases
+    if (pVersion != NULL &&
+        (SUCCEEDED(hr) ||
+        (hr == CORDBG_E_UNSUPPORTED_DEBUGGING_MODEL) ||
+            (hr == CORDBG_E_UNSUPPORTED_FORWARD_COMPAT)))
+    {
+        memcpy(pVersion, &version, sizeof(CLR_DEBUGGING_VERSION));
+    }
+
+    if (pDacModulePath != NULL)
+    {
+#ifdef FEATURE_PAL
+        free(pDacModulePath);
+#else
+        CoTaskMemFree(pDacModulePath);
+#endif
+    }
+
+    if (pDbiModulePath != NULL)
+    {
+#ifdef FEATURE_PAL
+        free(pDbiModulePath);
+#else
+        CoTaskMemFree(pDbiModulePath);
+#endif
+    }
+
+    // free the data target we QI'ed earlier
+    if (pDt != NULL)
+    {
+        pDt->Release();
+    }
 
     return hr;
 }
@@ -312,6 +422,7 @@ HRESULT CLRDebuggingImpl::GetCLRInfo(ICorDebugDataTarget* pDataTarget,
                                      __out_z __inout_ecount(dwDacNameCharCount) WCHAR* pDacName,
                                      DWORD  dwDacNameCharCount)
 {
+#ifndef FEATURE_PAL
     WORD imageFileMachine = 0;
     DWORD resourceSectionRVA = 0;
     HRESULT hr = GetMachineAndResourceSectionRVA(pDataTarget, moduleBaseAddress, &imageFileMachine, &resourceSectionRVA);
@@ -363,19 +474,42 @@ HRESULT CLRDebuggingImpl::GetCLRInfo(ICorDebugDataTarget* pDataTarget,
         // the initial state is that we haven't found a proper resource
         HRESULT hrGetResource = E_FAIL; 
      
-        // First check for the resource which has type = RC_DATA = 10, name = "CLRDEBUGINFO<host_os><host_arch>", language = 0
-        // So far we only support windows x86 and coresys x86 (we are building some other architectures, but they aren't tested and turned on yet it appears)
+        // First check for the resource which has type = RC_DATA = 10, name = "CLRDEBUGINFO<host_os><host_arch>", language = 0        
 #if defined (HOST_IS_WINDOWS_OS) && defined(_HOST_X86_)
-        hrGetResource = GetResourceRvaFromResourceSectionRvaByName(pDataTarget, moduleBaseAddress, resourceSectionRVA, 10, W("CLRDEBUGINFOWINDOWSX86"), 0,
-                 &debugResourceRVA, &debugResourceSize);
-        useCrossPlatformNaming = SUCCEEDED(hrGetResource);
+        const WCHAR * resourceName = W("CLRDEBUGINFOWINDOWSX86");
 #endif
 
 #if !defined (HOST_IS_WINDOWS_OS) && defined(_HOST_X86_)
-        hrGetResource = GetResourceRvaFromResourceSectionRvaByName(pDataTarget, moduleBaseAddress, resourceSectionRVA, 10, W("CLRDEBUGINFOCORESYSX86"), 0,
-                 &debugResourceRVA, &debugResourceSize);
-        useCrossPlatformNaming = SUCCEEDED(hrGetResource);
+        const WCHAR * resourceName = W("CLRDEBUGINFOCORESYSX86");
 #endif
+
+#if defined (HOST_IS_WINDOWS_OS) && defined(_HOST_AMD64_)
+        const WCHAR * resourceName = W("CLRDEBUGINFOWINDOWSAMD64");
+#endif
+
+#if !defined (HOST_IS_WINDOWS_OS) && defined(_HOST_AMD64_)
+        const WCHAR * resourceName = W("CLRDEBUGINFOCORESYSAMD64");
+#endif
+
+#if defined (HOST_IS_WINDOWS_OS) && defined(_HOST_ARM64_)
+        const WCHAR * resourceName = W("CLRDEBUGINFOWINDOWSARM64");
+#endif
+
+#if !defined (HOST_IS_WINDOWS_OS) && defined(_HOST_ARM64_)
+        const WCHAR * resourceName = W("CLRDEBUGINFOCORESYSARM64");
+#endif
+
+#if defined (HOST_IS_WINDOWS_OS) && defined(_HOST_ARM_)
+        const WCHAR * resourceName = W("CLRDEBUGINFOWINDOWSARM");
+#endif
+
+#if !defined (HOST_IS_WINDOWS_OS) && defined(_HOST_ARM_)
+        const WCHAR * resourceName = W("CLRDEBUGINFOCORESYSARM");
+#endif        
+
+        hrGetResource = GetResourceRvaFromResourceSectionRvaByName(pDataTarget, moduleBaseAddress, resourceSectionRVA, 10, resourceName, 0,
+                 &debugResourceRVA, &debugResourceSize);
+        useCrossPlatformNaming = SUCCEEDED(hrGetResource);        
 
         
 #if defined(HOST_IS_WINDOWS_OS) && (defined(_HOST_X86_) || defined(_HOST_AMD64_) || defined(_HOST_ARM_))
@@ -459,6 +593,22 @@ HRESULT CLRDebuggingImpl::GetCLRInfo(ICorDebugDataTarget* pDataTarget,
     {
         return S_OK;
     }
+#else
+    swprintf_s(pDacName, dwDacNameCharCount, W("%s"), MAKEDLLNAME_W(CORECLR_DAC_MODULE_NAME_W));
+    swprintf_s(pDbiName, dwDbiNameCharCount, W("%s"), MAKEDLLNAME_W(MAIN_DBI_MODULE_NAME_W));
+
+    pVersion->wMajor = 0;
+    pVersion->wMinor = 0;
+    pVersion->wBuild = 0;
+    pVersion->wRevision = 0;
+
+    *pdwDbiTimeStamp = 0;
+    *pdwDbiSizeOfImage = 0;
+    *pdwDacTimeStamp = 0;
+    *pdwDacSizeOfImage = 0;
+
+    return S_OK;
+#endif // FEATURE_PAL
 }
 
 // Formats the long name for DAC
@@ -474,19 +624,19 @@ HRESULT CLRDebuggingImpl::FormatLongDacModuleName(__out_z __inout_ecount(cchBuff
 #endif
 
 #if defined(_HOST_X86_)
-    WCHAR* pHostArch = W("x86");
+    const WCHAR* pHostArch = W("x86");
 #elif defined(_HOST_AMD64_)
-    WCHAR* pHostArch = W("amd64");
+    const WCHAR* pHostArch = W("amd64");
 #elif defined(_HOST_ARM_)
-    WCHAR* pHostArch = W("arm");
+    const WCHAR* pHostArch = W("arm");
 #elif defined(_HOST_ARM64_)
-    WCHAR* pHostArch = W("arm64");
+    const WCHAR* pHostArch = W("arm64");
 #else
     _ASSERTE(!"Unknown host arch");
     return E_NOTIMPL;
 #endif
 
-    WCHAR* pDacBaseName = NULL;
+    const WCHAR* pDacBaseName = NULL;
     if(m_skuId == CLR_ID_V4_DESKTOP)
         pDacBaseName = CLR_DAC_MODULE_NAME_W;
     else if(m_skuId == CLR_ID_CORECLR || m_skuId == CLR_ID_PHONE_CLR || m_skuId == CLR_ID_ONECORE_CLR)
@@ -497,7 +647,7 @@ HRESULT CLRDebuggingImpl::FormatLongDacModuleName(__out_z __inout_ecount(cchBuff
         return E_UNEXPECTED;
     }
 
-    WCHAR* pTargetArch = NULL;
+    const WCHAR* pTargetArch = NULL;
     if(targetImageFileMachine == IMAGE_FILE_MACHINE_I386)
     {
         pTargetArch = W("x86");
@@ -520,7 +670,7 @@ HRESULT CLRDebuggingImpl::FormatLongDacModuleName(__out_z __inout_ecount(cchBuff
         return E_INVALIDARG;
     }
 
-    WCHAR* pBuildFlavor = W("");
+    const WCHAR* pBuildFlavor = W("");
     if(pVersion->dwFileFlags & VS_FF_DEBUG)
     {
         if(pVersion->dwFileFlags & VS_FF_SPECIALBUILD)

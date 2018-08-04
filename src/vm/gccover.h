@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 
 
@@ -27,7 +26,7 @@ public:
 
         // Following 6 variables are for prolog / epilog walking coverage        
     ICodeManager* codeMan;          // CodeMan for this method
-    void* gcInfo;                   // gcInfo for this method
+    GCInfoToken gcInfoToken;             // gcInfo for this method
 
     Thread* callerThread;           // Thread associated with context callerRegs
     T_CONTEXT callerRegs;             // register state when method was entered
@@ -78,7 +77,7 @@ public:
 // 16-bit illegal instructions which will cause exception and cause 
 // control to go to GcStress codepath
 #define INTERRUPT_INSTR                 0xde00             
-#define INTERRUPT_INSTR_CALL            0xde01             
+#define INTERRUPT_INSTR_CALL            0xde03  // 0xde01 generates SIGTRAP (breakpoint) instead of SIGILL on Unix             
 #define INTERRUPT_INSTR_PROTECT_RET     0xde02      
 
 // 32-bit illegal instructions. It is necessary to replace a 16-bit instruction

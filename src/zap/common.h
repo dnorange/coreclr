@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //*****************************************************************************
 // common.h
 //
@@ -14,28 +13,32 @@
 #define __COMMON_H__
 
 #include <stdint.h>
+#include <stddef.h>
 #include <winwrap.h>
 #include <windows.h>
 #include <stdlib.h>
 #include <objbase.h>
-#include <stddef.h>
 #include <float.h>
 #include <limits.h>
 
-#if defined(_WIN64) || defined(_TARGET_ARM_)
+#if !defined(_TARGET_X86_) || defined(FEATURE_PAL)
 #ifndef WIN64EXCEPTIONS
 #define WIN64EXCEPTIONS
 #endif
-#endif // _WIN64 || _TARGET_ARM_
+#endif // !_TARGET_X86_ || FEATURE_PAL
+
+#ifdef _TARGET_64BIT_
+typedef unsigned __int64 TARGET_POINTER_TYPE;
+#else
+typedef unsigned int TARGET_POINTER_TYPE;
+#endif
 
 #include "utilcode.h"
 #include "corjit.h"
 #include "corcompile.h"
 #include "iceefilegen.h"
-#ifdef FEATURE_FUSION
-#include "fusionbind.h"
-#endif
 #include "corpriv.h"
+#include "gcinfotypes.h"
 
 #include "holder.h"
 #include "strongname.h"
@@ -50,9 +53,6 @@
 #include "guidfromname.h"
 #include "../dlls/mscorrc/resource.h"
 #include "zaplog.h"
-#ifndef FEATURE_CORECLR
-#include "eventmsg.h"
-#endif // FEATURE_CORECLR
 #include "ndpversion.h"
 
 #include "loaderheap.h"

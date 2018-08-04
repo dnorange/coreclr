@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //*****************************************************************************
 // rspriv.
 // 
@@ -35,10 +34,6 @@
 
 #include <cordbpriv.h>
 #include <dbgipcevents.h>
-
-#if !defined(FEATURE_DBGIPC_TRANSPORT_DI)
-#include <ipcmanagerinterface.h>
-#endif // !FEATURE_DBGIPC_TRANSPORT_DI
 
 #include "common.h"
 #include "primitives.h"
@@ -86,6 +81,7 @@ class CordbJITILFrame;
 class CordbInternalFrame;
 class CordbContext;
 class CordbThread;
+class CordbVariableHome;
 
 #ifdef FEATURE_INTEROP_DEBUGGING
 class CordbUnmanagedThread;
@@ -138,7 +134,9 @@ class DbgTransportSession;
 class ShimProcess;
 
 
+#ifndef FEATURE_PAL
 extern HINSTANCE GetModuleInst();
+#endif
 
 
 template <class T>
@@ -175,7 +173,7 @@ private:
     USHORT m_usPort;
 };
 
-#define forDbi (*(forDbiWorker *)NULL)
+extern forDbiWorker forDbi;
 
 // for dbi we just default to new, but we need to have these defined for both dac and dbi
 inline void * operator new(size_t lenBytes, const forDbiWorker &)
@@ -1264,14 +1262,14 @@ public:
         LOG((LF_CORDB, LL_EVERYTHING, "Memory: CordbBase object deleted: this=%p, id=%p, Refcount=0x%x\n", this, m_id, m_RefCount));
 
 #ifdef _DEBUG
-        InterlockedDecrement(&s_TotalObjectCount);
-        _ASSERTE(s_TotalObjectCount >= 0);
+        LONG newTotalObjectsCount = InterlockedDecrement(&s_TotalObjectCount);
+        _ASSERTE(newTotalObjectsCount >= 0);
 #endif
 
         // Don't shutdown logic until everybody is done with it.
         // If we leak objects, this may mean that we never shutdown logging at all!
 #if defined(_DEBUG) && defined(LOGGING)
-        if (s_TotalObjectCount == 0)
+        if (newTotalObjectsCount == 0)
         {
             ShutdownLogging();
         }
@@ -1282,35 +1280,35 @@ public:
         Member function behavior of a neutered COM object:
 
              1. AddRef(), Release(), QueryInterface() work as normal.
-                 a. This gives folks who are responsable for pairing a Release() with
-                    an AddRef() a chance to dereferance thier pointer and call Release()
+                 a. This gives folks who are responsible for pairing a Release() with
+                    an AddRef() a chance to dereference their pointer and call Release()
                     when they are informed, explicitly or implicitly, that the object is neutered.
 
              2. Any other member function will return an error code unless documented.
-                 a. If a member fuction returns information when the COM object is
+                 a. If a member function returns information when the COM object is
                     neutered then the semantics of that function need to be documented.
-                    (ie. If an AppDomain is unloaded and you have a referance to the COM
+                    (ie. If an AppDomain is unloaded and you have a reference to the COM
                     object representing the AppDomain, how _should_ it behave? That behavior
                     should be documented)
 
 
         Postcondions of Neuter():
 
-             1. All circular referances (aka back-pointers) are "broken". They are broken
-                by calling Release() on all "Weak Referances" to the object. If you're a purist,
+             1. All circular references (aka back-pointers) are "broken". They are broken
+                by calling Release() on all "Weak References" to the object. If you're a purist,
                 these pointers should also be NULLed out.
-                 a. Weak Referances/Strong Referances:
+                 a. Weak References/Strong References:
                      i. If any objects are not "reachable" from the root (ie. stack or from global pointers)
                          they should be reclaimed. If they are not, they are leaked and there is an issue.
                      ii. There must be a partial order on the objects such that if A < B then:
-                         1. A has a referance to B. This referance is a "strong referance"
+                         1. A has a reference to B. This reference is a "strong reference"
                          2. A, and thus B, is reachable from the root
-                     iii. If a referance belongs in the partial order then it is a "strong referance" else
-                         it is a weak referance.
+                     iii. If a reference belongs in the partial order then it is a "strong reference" else
+                         it is a weak reference.
          *** 2. Sufficient conditions to ensure no COM objects are leaked: ***
                 a. When Neuter() is invoked:
-                     i. Calles Release on all its weak referances.
-                     ii. Then, for each strong referance:
+                     i. Calles Release on all its weak references.
+                     ii. Then, for each strong reference:
                          1. invoke Neuter()
                          2. invoke Release()
                      iii. If it's derived from a CordbXXX class, call Neuter() on the base class.
@@ -1319,7 +1317,7 @@ public:
                  a. Members of IUknown, AddRef(), Release(), QueryInterfac()
                  b. Those documented to have functionality when the object is neutered.
                      i. Neuter() still works w/o error. If it is invoke a second time it will have already
-                        released all its strong and weak referances so it could just return.
+                        released all its strong and weak references so it could just return.
 
 
         Alternate design ideas:
@@ -1330,7 +1328,7 @@ public:
                          Which one should call Release()? For now we have CordbFunction call Release() on CordbCode.
 
              DESIGN: It is not a necessary condition in that Neuter() invoke Release() on all
-                     it's strong referances. Instead, it would be sufficent to ensure all object are released, that
+                     it's strong references. Instead, it would be sufficient to ensure all object are released, that
                      each object call Release() on all its strong pointers in its destructor.
                       1. This might be done if its necessary for some member to return "tombstone"
                          information after the object has been netuered() which involves the siblings (wrt poset)
@@ -1345,18 +1343,18 @@ public:
                              1. Assert that it's done after NeuterStrongPointers()
                      2. That would introduce a bunch of functions... but it would be clear.
 
-             DESIGN: CordbBase could provide a function to register strong and weak referances. That way CordbBase
+             DESIGN: CordbBase could provide a function to register strong and weak references. That way CordbBase
                      could implement a general version of ReleaseWeak/ReleaseStrong/NeuterStrongPointers(). This
                      would provide a very error resistant framework for extending the object model plus it would
                      be very explicit about what is going on.
                          One thing that might trip this is idea up is that if an object has two parents,
-                         like the CordbCode might, then either both objects call Neuter or one is referance
+                         like the CordbCode might, then either both objects call Neuter or one is reference
                          is made weak.
 
 
         Our implementation:
 
-           The graph fromed by the strong referances must remain acyclic.
+           The graph formed by the strong references must remain acyclic.
            It's up to the developer (YOU!) to ensure that each Neuter
            function maintains that invariant.
 
@@ -1371,7 +1369,7 @@ public:
                       CordbModule
                           CordbClass
                           CordbFunction
-                              CordbCode (Can we assert a thread will not referance
+                              CordbCode (Can we assert a thread will not reference
                                           the same CordbCode as a CordbFunction?)
                  CordbThread
                      CordbChains
@@ -1381,7 +1379,7 @@ public:
 
             <TODO>TODO: Some Neuter functions have not yet been implemented due to time restrictions.</TODO>
 
-            <TODO>TODO: Some weak referances never have AddRef() called on them. If that's cool then
+            <TODO>TODO: Some weak references never have AddRef() called on them. If that's cool then
                   it should be stated in the documentation. Else it should be changed.</TODO>
 */
 
@@ -1572,7 +1570,7 @@ _____Neuter_Status_Already_Marked = 0; \
 //    - this also means we absolutely can't send IPC events (since that requires a CordbProcess)
 // 3) The only safe data are blittalbe embedded fields (eg, a pid or stack range) 
 //
-// Any usage of this macro should clearly specificy why this is safe.
+// Any usage of this macro should clearly specify why this is safe.
 #define OK_IF_NEUTERED(pThis) \
 int _____Neuter_Status_Already_Marked; \
 _____Neuter_Status_Already_Marked = 0;
@@ -1585,7 +1583,7 @@ template< typename ElemType,
           typename ElemPublicType,
           typename EnumInterfaceType,
           ElemPublicType (*GetPublicType)(ElemType)>
-class CordbEnumerator : public CordbBase, EnumInterfaceType
+class CordbEnumerator : public CordbBase, public EnumInterfaceType
 {
 private:
     // the list of items being enumerated over
@@ -1605,8 +1603,8 @@ public:
 
 // IUnknown interface
     virtual COM_METHOD QueryInterface(REFIID riid, VOID** ppInterface);
-    virtual ULONG __stdcall AddRef();
-    virtual ULONG __stdcall Release();
+    virtual ULONG STDMETHODCALLTYPE AddRef();
+    virtual ULONG STDMETHODCALLTYPE Release();
 
 // ICorDebugEnum interface
     virtual COM_METHOD Clone(ICorDebugEnum **ppEnum);
@@ -1678,6 +1676,11 @@ typedef CordbEnumerator<RsGuidToTypeMapping,
                         CorDebugGuidToTypeMapping,
                         ICorDebugGuidToTypeEnum,
                         GuidToTypeMappingConvert > CordbGuidToTypeEnumerator;
+
+typedef CordbEnumerator<RSSmartPtr<CordbVariableHome>,
+                        ICorDebugVariableHome*,
+                        ICorDebugVariableHomeEnum,
+                        QueryInterfaceConvert<RSSmartPtr<CordbVariableHome>, ICorDebugVariableHome> > CordbVariableHomeEnumerator;
 
 // ----------------------------------------------------------------------------
 // Hash table for CordbBase objects.
@@ -2192,9 +2195,7 @@ public:
     // ICorDebug
     //-----------------------------------------------------------
 
-#ifdef FEATURE_CORECLR
     HRESULT SetTargetCLR(HMODULE hmodTargetCLR);
-#endif // FEATURE_CORECLR
 
     COM_METHOD Initialize();
     COM_METHOD Terminate();
@@ -2311,7 +2312,7 @@ public:
     CorDebugInterfaceVersion    GetDebuggerVersion() const;
 
 #ifdef FEATURE_CORESYSTEM
-	HMODULE GetTargetCLR() { return m_targetCLR; }
+    HMODULE GetTargetCLR() { return m_targetCLR; }
 #endif
 
 private:
@@ -2333,7 +2334,7 @@ private:
 //Note - this code could be useful outside coresystem, but keeping the change localized
 // because we are late in the win8 release
 #ifdef FEATURE_CORESYSTEM
-	HMODULE m_targetCLR;
+    HMODULE m_targetCLR;
 #endif
 };
 
@@ -2475,12 +2476,12 @@ public:
     // ICorDebugAppDomain3 APIs
     //-----------------------------------------------------------
     COM_METHOD GetCachedWinRTTypesForIIDs(
-					    ULONG32               cGuids,
-    					GUID                * guids,
-	    				ICorDebugTypeEnum * * ppTypesEnum);
+                        ULONG32               cGuids,
+                        GUID                * guids,
+                        ICorDebugTypeEnum * * ppTypesEnum);
 
     COM_METHOD GetCachedWinRTTypes(
-						ICorDebugGuidToTypeEnum * * ppType);
+                        ICorDebugGuidToTypeEnum * * ppType);
 
     //-----------------------------------------------------------
     // ICorDebugAppDomain4
@@ -2725,6 +2726,7 @@ public:
         {
             case cInband: return "cInband";
             case cInband_NotNewEvent: return "cInband_NotNewEvent";
+            case cFirstChanceHijackStarted: return "cFirstChanceHijackStarted";
             case cInbandHijackComplete: return "cInbandHijackComplete";
             case cInbandExceptionRetrigger: return "cInbandExceptionRetrigger";
             case cBreakpointRequiringHijack: return "cBreakpointRequiringHijack";
@@ -2919,7 +2921,7 @@ class CordbProcess :
     public ICorDebugProcess4,
     public ICorDebugProcess5,
     public ICorDebugProcess7,
-	public ICorDebugProcess8,
+    public ICorDebugProcess8,
     public IDacDbiInterface::IAllocator,
     public IDacDbiInterface::IMetaDataLookup,
     public IProcessShimHooks
@@ -3426,9 +3428,7 @@ public:
                  type == DB_IPCE_INTERCEPT_EXCEPTION ||
                  type == DB_IPCE_GET_NGEN_COMPILER_FLAGS ||
                  type == DB_IPCE_SET_NGEN_COMPILER_FLAGS || 
-                 type == DB_IPCE_SET_VALUE_CLASS ||
-                 type == DB_IPCE_NETCF_HOST_CONTROL_PAUSE ||
-                 type == DB_IPCE_NETCF_HOST_CONTROL_RESUME);
+                 type == DB_IPCE_SET_VALUE_CLASS);
 
         ipce->type = type;
         ipce->hr = S_OK;
@@ -4697,7 +4697,7 @@ public:
 // See definition of ICorDebugType for further invariants on types.
 //
 
-class CordbType : public CordbBase, public ICorDebugType
+class CordbType : public CordbBase, public ICorDebugType, public ICorDebugType2
 {
 public:
     CordbType(CordbAppDomain *appdomain, CorElementType ty, unsigned int rank);
@@ -4736,6 +4736,11 @@ public:
                                    ICorDebugValue ** ppValue);
     COM_METHOD GetRank(ULONG32 *pnRank);
 
+    //-----------------------------------------------------------
+    // ICorDebugType2
+    //-----------------------------------------------------------
+    COM_METHOD GetTypeID(COR_TYPEID *pId);
+    
     //-----------------------------------------------------------
     // Non-COM members
     //-----------------------------------------------------------
@@ -5330,7 +5335,11 @@ const BOOL bILCode = TRUE;
 // B/C of generics, a single IL function may get jitted multiple times and
 // be associated w/ multiple native code blobs (CordbNativeCode).
 //
-class CordbFunction : public CordbBase, public ICorDebugFunction, public ICorDebugFunction2, public ICorDebugFunction3
+class CordbFunction : public CordbBase, 
+                      public ICorDebugFunction, 
+                      public ICorDebugFunction2, 
+                      public ICorDebugFunction3, 
+                      public ICorDebugFunction4
 {
 public:
     //-----------------------------------------------------------
@@ -5389,6 +5398,11 @@ public:
     COM_METHOD GetActiveReJitRequestILCode(ICorDebugILCode **ppReJitedILCode);
 
     //-----------------------------------------------------------
+    // ICorDebugFunction4
+    //-----------------------------------------------------------
+    COM_METHOD CreateNativeBreakpoint(ICorDebugFunctionBreakpoint **ppBreakpoint);
+
+    //-----------------------------------------------------------
     // Internal members
     //-----------------------------------------------------------
 protected:
@@ -5423,7 +5437,7 @@ public:
     HRESULT GetILCode(CordbILCode ** ppCode);
 
     // Finds or creates an ILCode for a given rejit request
-    HRESULT LookupOrCreateReJitILCode(VMPTR_SharedReJitInfo vmSharedRejitInfo,
+    HRESULT LookupOrCreateReJitILCode(VMPTR_ILCodeVersionNode vmILCodeVersionNode,
                                       CordbReJitILCode** ppILCode);
 
 
@@ -5732,6 +5746,8 @@ public:
     HRESULT GetLocalVariableType(DWORD dwIndex, const Instantiation * pInst, CordbType ** ppResultType);
     mdSignature GetLocalVarSigToken();
 
+    COM_METHOD CreateNativeBreakpoint(ICorDebugFunctionBreakpoint **ppBreakpoint);
+
 private:
     // Read the actual bytes of IL code into the data member m_rgbCode.
     // Helper routine for GetCode
@@ -5763,11 +5779,13 @@ protected:
 * rejitID. Thus it is 1:N with a given instantiation of CordbFunction.
 * ------------------------------------------------------------------------- */
 
-class CordbReJitILCode : public CordbILCode, public ICorDebugILCode, public ICorDebugILCode2
+class CordbReJitILCode : public CordbILCode, 
+                         public ICorDebugILCode, 
+                         public ICorDebugILCode2
 {
 public:
     // Initialize a new CordbILCode instance
-    CordbReJitILCode(CordbFunction *pFunction, SIZE_T encVersion, VMPTR_SharedReJitInfo vmSharedReJitInfo);
+    CordbReJitILCode(CordbFunction *pFunction, SIZE_T encVersion, VMPTR_ILCodeVersionNode vmILCodeVersionNode);
 
     //-----------------------------------------------------------
     // IUnknown
@@ -5788,7 +5806,7 @@ public:
     //-----------------------------------------------------------
     COM_METHOD GetLocalVarSigToken(mdSignature *pmdSig);
     COM_METHOD GetInstrumentedILMap(ULONG32 cMap, ULONG32 *pcMap, COR_IL_MAP map[]);
-
+    
 private:
     HRESULT Init(DacSharedReJitInfo* pSharedReJitInfo);
 
@@ -5813,7 +5831,10 @@ private:
  * code, including an optional set of mappings from IL to offsets in the native Code.
  * ------------------------------------------------------------------------- */
 
-class CordbNativeCode : public CordbCode, public ICorDebugCode2, public ICorDebugCode3
+class CordbNativeCode : public CordbCode,
+                        public ICorDebugCode2,
+                        public ICorDebugCode3,
+                        public ICorDebugCode4
 {
 public:
     CordbNativeCode(CordbFunction * pFunction, 
@@ -5853,6 +5874,11 @@ public:
     COM_METHOD GetReturnValueLiveOffset(ULONG32 ILoffset, ULONG32 bufferSize, ULONG32 *pFetched, ULONG32 *pOffsets);
     
 
+    //-----------------------------------------------------------
+    // ICorDebugCode4
+    //-----------------------------------------------------------
+    COM_METHOD EnumerateVariableHomes(ICorDebugVariableHomeEnum **ppEnum);
+    
     //-----------------------------------------------------------
     // Internal members
     //-----------------------------------------------------------
@@ -6105,22 +6131,21 @@ public:
     void CleanupStack();
     void MarkStackFramesDirty();
 
-#if !defined(DBG_TARGET_ARM) // @ARMTODO
 
 #if defined(DBG_TARGET_X86)
     // Converts the values in the floating point register area of the context to real number values.
     void Get32bitFPRegisters(CONTEXT * pContext);
 
-#elif defined(DBG_TARGET_AMD64)
+#elif defined(DBG_TARGET_AMD64) ||  defined(DBG_TARGET_ARM64) || defined(DBG_TARGET_ARM)
     // Converts the values in the floating point register area of the context to real number values.
     void Get64bitFPRegisters(FPRegister64 * rgContextFPRegisters, int start, int nRegisters);
+
 #endif // DBG_TARGET_X86
 
    // Initializes the float state members of this instance of CordbThread. This function gets the context and
    // converts the floating point values from their context representation to real number values.    
    void LoadFloatState();
 
-#endif //!DBG_TARGET_ARM @ARMTODO
 
     HRESULT SetIP(  bool fCanSetIPOnly,
                     CordbNativeCode * pNativeCode,
@@ -6268,11 +6293,9 @@ public:
     //  Instead, we mark m_fFramesFresh in CleanupStack() and clear the cache only when it is used next time.
     CDynArray<CordbFrame *> m_stackFrames;
 
-#if !defined(DBG_TARGET_ARM) // @ARMTODO
     bool                  m_fFloatStateValid;
     unsigned int          m_floatStackTop;
     double                m_floatValues[DebuggerIPCE_FloatCount];
-#endif // !DBG_TARGET_ARM @ARMTODO
 
 private:
     // True for the window after an Exception callback, but before it's been continued.
@@ -6911,11 +6934,11 @@ public:
     // new-style constructor
     CordbMiscFrame(DebuggerIPCE_JITFuncData * pJITFuncData);
 
-#if defined(DBG_TARGET_WIN64) || defined(DBG_TARGET_ARM)
+#ifdef WIN64EXCEPTIONS
     SIZE_T             parentIP;
     FramePointer       fpParentOrSelf;
     bool               fIsFilterFunclet;
-#endif // DBG_TARGET_WIN64 || DBG_TARGET_ARM
+#endif // WIN64EXCEPTIONS
 };
 
 
@@ -7076,11 +7099,9 @@ public:
                                            ICorDebugValue **ppValue);
     UINT_PTR * GetAddressOfRegister(CorDebugRegister regNum) const;
     CORDB_ADDRESS GetLeftSideAddressOfRegister(CorDebugRegister regNum) const;
-#if !defined(DBG_TARGET_ARM) // @ARMTODO
     HRESULT GetLocalFloatingPointValue(DWORD index,
                                             CordbType * pType,
                                             ICorDebugValue **ppValue);
-#endif // !DBG_TARGET_ARM @ARMTODO
 
 
     CORDB_ADDRESS GetLSStackAddress(ICorDebugInfo::RegNum regNum, signed offset);
@@ -7097,10 +7118,10 @@ public:
     bool      IsFunclet();
     bool      IsFilterFunclet();
 
-#if defined(DBG_TARGET_WIN64) || defined(DBG_TARGET_ARM)
+#ifdef WIN64EXCEPTIONS
     // return the offset of the parent method frame at which an exception occurs
     SIZE_T    GetParentIP();
-#endif // DBG_TARGET_WIN64 || DBG_TARGET_ARM
+#endif // WIN64EXCEPTIONS
 
     TADDR GetAmbientESP() { return m_taAmbientESP; }
     TADDR GetReturnRegisterValue();
@@ -7544,7 +7565,7 @@ class CordbFunctionBreakpoint : public CordbBreakpoint,
                                 public ICorDebugFunctionBreakpoint
 {
 public:
-    CordbFunctionBreakpoint(CordbCode *code, SIZE_T offset);
+    CordbFunctionBreakpoint(CordbCode *code, SIZE_T offset, BOOL offsetIsIl);
     ~CordbFunctionBreakpoint();
 
     virtual void Neuter();
@@ -7605,6 +7626,7 @@ public:
     // leaked.
     RSExtSmartPtr<CordbCode> m_code;
     SIZE_T          m_offset;
+    BOOL            m_offsetIsIl;
 };
 
 /* ------------------------------------------------------------------------- *
@@ -7791,6 +7813,8 @@ public:
     // constructor to initialize an instance of EnregisteredValueHome
     EnregisteredValueHome(const CordbNativeFrame * pFrame);
 
+    virtual ~EnregisteredValueHome() {}
+
     // virtual "copy constructor" to make a copy of "this" to be owned by a different instance of
     // Cordb*Value. If an instance of CordbVCObjectValue represents an enregistered value class, it means
     // there is a single field. This implies that the register for the CordbVCObject instance is the same as
@@ -7803,7 +7827,6 @@ public:
     // note:
     //    C++ allows derived implementations to differ on return type, thus allowing
     //    derived impls to return the cloned copy as its actual derived type, and not just as a base type.
-
 
 
     virtual
@@ -8221,6 +8244,9 @@ class ValueHome
 public:
     ValueHome(CordbProcess * pProcess):
       m_pProcess(pProcess) { _ASSERTE(pProcess != NULL); };
+
+    virtual
+    ~ValueHome() {}
  
     // releases resources as necessary
     virtual
@@ -8535,6 +8561,63 @@ private:
 
 typedef enum {kUnboxed, kBoxed} BoxedValue;
 #define EMPTY_BUFFER TargetBuffer(PTR_TO_CORDB_ADDRESS((void *)NULL), 0)
+
+/* ------------------------------------------------------------------------- *
+ * Variable Home class
+ * ------------------------------------------------------------------------- */
+class CordbVariableHome : public CordbBase, public ICorDebugVariableHome
+{
+public:
+    CordbVariableHome(CordbNativeCode *pCode,
+                      const ICorDebugInfo::NativeVarInfo nativeVarInfo,
+                      BOOL isLoc,
+                      ULONG index);
+    ~CordbVariableHome();
+    virtual void Neuter();
+
+#ifdef _DEBUG
+    virtual const char * DbgGetName() { return "CordbVariableHome"; }
+#endif
+    
+    //-----------------------------------------------------------
+    // IUnknown
+    //-----------------------------------------------------------
+    ULONG STDMETHODCALLTYPE AddRef()
+    {
+        return (BaseAddRef());
+    }
+    ULONG STDMETHODCALLTYPE Release()
+    {
+        return (BaseRelease());
+    }
+
+    COM_METHOD QueryInterface(REFIID riid, void **ppInterface);
+    
+    //-----------------------------------------------------------
+    // ICorDebugVariableHome
+    //-----------------------------------------------------------
+    
+    COM_METHOD GetCode(ICorDebugCode **ppCode);
+    
+    COM_METHOD GetSlotIndex(ULONG32 *pSlotIndex);
+
+    COM_METHOD GetArgumentIndex(ULONG32* pArgumentIndex);
+
+    COM_METHOD GetLiveRange(ULONG32* pStartOffset,
+                            ULONG32 *pEndOffset);
+    
+    COM_METHOD GetLocationType(VariableLocationType *pLocationType);
+
+    COM_METHOD GetRegister(CorDebugRegister *pRegister);
+    
+    COM_METHOD GetOffset(LONG *pOffset);
+private:
+    RSSmartPtr<CordbNativeCode> m_pCode;
+    ICorDebugInfo::NativeVarInfo m_nativeVarInfo;
+    BOOL m_isLocal;
+    ULONG m_index;
+};
+
 
 // for an inheritance graph of the ICDValue types, // See file:./ICorDebugValueTypes.vsd for a diagram of the types.  
 /* ------------------------------------------------------------------------- *
@@ -10147,6 +10230,8 @@ class RCETWorkItem
 {
 public:
 
+    virtual ~RCETWorkItem() {}
+    
     // Item is executed and then removed from the list and deleted.
     virtual void Do() = 0;
 
@@ -10497,44 +10582,17 @@ private:
     HRESULT EnableSSAfterBP();
     bool GetEEThreadCantStopHelper();
 
-    DWORD_PTR GetTlsSlot(SIZE_T slot);
+    HRESULT GetTlsSlot(DWORD slot, REMOTE_PTR *pValue);
+    HRESULT SetTlsSlot(DWORD slot, REMOTE_PTR value);
     REMOTE_PTR GetPreDefTlsSlot(SIZE_T slot, bool * pRead);
 
     void * m_pPatchSkipAddress;
 
-
-
-    /* 
-     * This abstracts away an overload of the OS thread's TLS slot. In 
-     * particular the runtime may or may not have created a thread object for
-     * a particular OS thread at any point.
-     *
-     * If the runtime has created a thread object, then it stores a pointer to
-     * that thread object in the thread's TLS slot.
-     *
-     * If not, then interop-debugging uses that TLS slot to store temporary 
-     * information.
-     *
-     * To determine this, interop-debugging will set the low bit.  Thus when
-     * we read the TLS slot, if it is non-NULL, anything w/o the low bit set
-     * is an EE thread object ptr.  Anything with the low bit set is an 
-     * interop-debugging value.  Any NULL is null, and an indicator that 
-     * there does not exist a runtime thread object for this thread yet.
-     *
-     */
-    REMOTE_PTR m_pEEThread;
-    REMOTE_PTR m_pdwTlsValue;
-    BOOL m_fValidTlsData;
-
     UINT m_continueCountCached;
 
-    void CacheEEDebuggerWord();
-    HRESULT SetEEThreadValue(REMOTE_PTR EETlsValue);
-#ifdef FEATURE_IMPLICIT_TLS
     DWORD_PTR GetEEThreadValue();
-    REMOTE_PTR GetClrModuleTlsDataAddress();
     REMOTE_PTR GetEETlsDataBlock();
-#endif
+    HRESULT GetClrModuleTlsDataAddress(REMOTE_PTR* pAddress);
 
 public:
     HRESULT GetEEDebuggerWord(REMOTE_PTR *pValue);
@@ -11393,7 +11451,7 @@ public:
 // - we're only being called through a public API.
 //-----------------------------------------------------------------------------
 #define PUBLIC_API_ENTRY(_pThis) \
-    STRESS_LOG1(LF_CORDB, LL_INFO1000, "[Public API '" __FUNCTION__ "', this=0x%p]\n", _pThis); \
+    STRESS_LOG2(LF_CORDB, LL_INFO1000, "[Public API '%s', this=0x%p]\n", __FUNCTION__, _pThis); \
     PUBLIC_CONTRACT; \
     PublicAPIHolder __pah;
 
@@ -11402,7 +11460,7 @@ public:
 // public version is heavier (eg, checking the HRESULT) so we benefit from having a fast
 // internal version and calling that directly.
 #define PUBLIC_REENTRANT_API_ENTRY(_pThis) \
-    STRESS_LOG1(LF_CORDB, LL_INFO1000, "[Public API (re) '" __FUNCTION__ "', this=0x%p]\n", _pThis); \
+    STRESS_LOG2(LF_CORDB, LL_INFO1000, "[Public API (re) '%s', this=0x%p]\n", __FUNCTION__, _pThis); \
     PUBLIC_CONTRACT; \
     PublicReentrantAPIHolder __pah;
 

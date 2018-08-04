@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 //-----------------------------------------------------------------------------
 // @File: slist.h
 //
@@ -137,14 +136,14 @@ protected:
         }
         else
         {
-#ifdef __GNUC__
-            // GCC defines offsetof to be __builtin_offsetof, which doesn't use the
+#if 1
+            // Newer compilers define offsetof to be __builtin_offsetof, which doesn't use the
             // old-school memory model trick to determine offset.
             const UINT_PTR offset = (((UINT_PTR)&(((T *)0x1000)->*LinkPtr))-0x1000);
             return (T*)__PTR(dac_cast<TADDR>(pLink) - offset);
 #else
-            return (T*)__PTR(dac_cast<TADDR>(pLink) - offsetof(T, *LinkPtr));         
-#endif // __GNUC__
+            return (T*)__PTR(dac_cast<TADDR>(pLink) - offsetof(T, *LinkPtr));
+#endif
         }
     }
 
